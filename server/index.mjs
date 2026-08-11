@@ -277,8 +277,8 @@ async function extractInvoicePdf(buffer) {
   const linePoMatch = text.match(/PO,?\s*Number[\s\S]{0,80}?20\d{2}-\d{2}-\d{2}\s+([^\r\n]+)/i);
   const oldTotalMatch = text.match(/Total\s+\$\s*([\d,]+\.\d{2})/i);
 
-  // Nuevo Formato Alternativo (Trader Joe's): INVOICE DATE, INVOICE #, ORDER #, Location ID, Invoice Total
-  const tjAltDateMatch = text.match(/INVOICE\s+DATE:\s*[\r\n]*\s*(20\d{2}-\d{2}-\d{2})/i);
+  // Nuevo Formato Alternativo (Trader Joe's): PO DATE, INVOICE #, ORDER #, Location ID, Invoice Total
+  const tjAltDateMatch = text.match(/PO\s+DATE:\s*[\r\n]*\s*(20\d{2}-\d{2}-\d{2})/i);
   const tjAltNumberMatch = text.match(/INVOICE\s*#:\s*([A-Z0-9-]+)/i);
   const tjAltPoMatch = text.match(/ORDER\s*#:\s*([A-Z0-9-]+)/i);
   const tjAltTotalMatch = text.match(/Invoice\s+Total\s*\$\s*([\d,]+\.\d{2})/i);
