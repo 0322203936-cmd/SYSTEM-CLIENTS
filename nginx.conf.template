@@ -1,0 +1,30 @@
+server {
+    listen 80;
+    server_name tu-dominio.com o-ip-publica;
+
+    # Directorio donde Angular compiló los archivos
+    root /var/www/facturacion-clientes/dist/facturacion-clientes;
+    index index.html;
+
+    # Gzip para mejor rendimiento
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Frontend de Angular
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API Backend (Node.js)
+    location /api/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Permitir subir archivos grandes si es necesario
+        client_max_body_size 20M;
+    }
+}

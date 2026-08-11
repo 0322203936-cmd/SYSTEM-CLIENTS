@@ -1,0 +1,216 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:opsz,wght@6..12,400;6..12,500;6..12,600;6..12,700&display=swap');
+@import "@angular/material/prebuilt-themes/indigo-pink.css";
+@import "@progress/kendo-theme-default/dist/default-ocean-blue.css";
+
+* { box-sizing: border-box; }
+html, body { background: #fff; }
+body { margin: 0; color: #10251d; font-family: "Nunito Sans", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+::selection { background: #bdebd6; color: #0d3d2d; }
+
+/* Local layout primitives. These replace the former Tailwind utilities while
+   Angular Material owns the interactive controls and form components. */
+[class~="hidden"] { display: none !important; }
+[class~="block"] { display: block; }
+[class~="flex"] { display: flex; }
+[class~="inline-flex"] { display: inline-flex; }
+[class~="grid"] { display: grid; }
+[class~="relative"] { position: relative; }
+[class~="absolute"] { position: absolute; }
+[class~="fixed"] { position: fixed; }
+[class~="sticky"] { position: sticky; }
+[class~="inset-0"] { inset: 0; }
+[class~="top-0"] { top: 0; }
+[class~="top-6"] { top: 1.5rem; }
+[class~="right-0"] { right: 0; }
+[class~="right-6"] { right: 1.5rem; }
+[class~="bottom-6"] { bottom: 1.5rem; }
+[class~="z-30"] { z-index: 30; }
+[class~="z-50"] { z-index: 50; }
+[class~="z-[60]"] { z-index: 60; }
+[class~="min-h-screen"] { min-height: 100vh; }
+[class~="min-w-[760px]"] { min-width: 760px; }
+[class~="min-w-[800px]"] { min-width: 800px; }
+[class~="w-full"] { width: 100%; }
+[class~="w-9"] { width: 2.25rem; }
+[class~="w-10"] { width: 2.5rem; }
+[class~="w-44"] { width: 11rem; }
+[class~="h-9"] { height: 2.25rem; }
+[class~="h-10"] { height: 2.5rem; }
+[class~="h-[76px]"] { height: 76px; }
+[class~="max-w-md"] { max-width: 28rem; }
+[class~="max-w-xl"] { max-width: 36rem; }
+[class~="max-w-2xl"] { max-width: 42rem; }
+[class~="max-w-3xl"] { max-width: 48rem; }
+[class~="max-w-[638px]"] { max-width: 638px; }
+[class~="max-w-[1440px]"] { max-width: 1440px; }
+[class~="mx-auto"] { margin-inline: auto; }
+[class~="mt-1"] { margin-top: .25rem; }
+[class~="mt-2"] { margin-top: .5rem; }
+[class~="mt-3"] { margin-top: .75rem; }
+[class~="mt-5"] { margin-top: 1.25rem; }
+[class~="mt-6"] { margin-top: 1.5rem; }
+[class~="mt-7"] { margin-top: 1.75rem; }
+[class~="mt-8"] { margin-top: 2rem; }
+[class~="mt-9"] { margin-top: 2.25rem; }
+[class~="mb-2"] { margin-bottom: .5rem; }
+[class~="mb-3"] { margin-bottom: .75rem; }
+[class~="mb-5"] { margin-bottom: 1.25rem; }
+[class~="mr-auto"] { margin-right: auto; }
+[class~="my-8"] { margin-block: 2rem; }
+[class~="p-2"] { padding: .5rem; }
+[class~="p-4"] { padding: 1rem; }
+[class~="p-6"] { padding: 1.5rem; }
+[class~="p-7"] { padding: 1.75rem; }
+[class~="p-16"] { padding: 4rem; }
+[class~="px-1"] { padding-inline: .25rem; }
+[class~="px-3"] { padding-inline: .75rem; }
+[class~="px-4"] { padding-inline: 1rem; }
+[class~="px-5"] { padding-inline: 1.25rem; }
+[class~="px-6"] { padding-inline: 1.5rem; }
+[class~="py-1"] { padding-block: .25rem; }
+[class~="py-2"] { padding-block: .5rem; }
+[class~="py-2.5"] { padding-block: .625rem; }
+[class~="py-3"] { padding-block: .75rem; }
+[class~="py-4"] { padding-block: 1rem; }
+[class~="py-20"] { padding-block: 5rem; }
+[class~="pb-3"] { padding-bottom: .75rem; }
+[class~="sm:p-9"] { padding: 2.25rem; }
+[class~="flex-col"] { flex-direction: column; }
+[class~="flex-wrap"] { flex-wrap: wrap; }
+[class~="items-center"] { align-items: center; }
+[class~="items-end"] { align-items: flex-end; }
+[class~="items-start"] { align-items: flex-start; }
+[class~="justify-center"] { justify-content: center; }
+[class~="justify-between"] { justify-content: space-between; }
+[class~="justify-end"] { justify-content: flex-end; }
+[class~="place-items-center"] { place-items: center; }
+[class~="gap-2"] { gap: .5rem; }
+[class~="gap-3"] { gap: .75rem; }
+[class~="gap-4"] { gap: 1rem; }
+[class~="gap-5"] { gap: 1.25rem; }
+[class~="gap-6"] { gap: 1.5rem; }
+[class~="gap-7"] { gap: 1.75rem; }
+[class~="gap-8"] { gap: 2rem; }
+[class~="space-y-3"] > :not([hidden]) ~ :not([hidden]) { margin-top: .75rem; }
+[class~="space-y-6"] > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+[class~="grid-cols-2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+[class~="grid-cols-[1fr_auto]"] { grid-template-columns: minmax(0, 1fr) auto; }
+[class~="overflow-hidden"] { overflow: hidden; }
+[class~="overflow-y-auto"] { overflow-y: auto; }
+[class~="overflow-x-auto"] { overflow-x: auto; }
+[class~="text-left"] { text-align: left; }
+[class~="text-center"] { text-align: center; }
+[class~="text-right"] { text-align: right; }
+[class~="text-xs"] { font-size: .75rem; line-height: 1rem; }
+[class~="text-sm"] { font-size: .875rem; line-height: 1.25rem; }
+[class~="text-lg"] { font-size: 1.125rem; line-height: 1.75rem; }
+[class~="text-xl"] { font-size: 1.25rem; line-height: 1.75rem; }
+[class~="text-2xl"] { font-size: 1.5rem; line-height: 2rem; }
+[class~="text-3xl"] { font-size: 1.875rem; line-height: 2.25rem; }
+[class~="font-medium"] { font-weight: 500; }
+[class~="font-semibold"] { font-weight: 600; }
+[class~="font-bold"] { font-weight: 700; }
+[class~="uppercase"] { text-transform: uppercase; }
+[class~="leading-tight"] { line-height: 1.25; }
+[class~="leading-6"] { line-height: 1.5rem; }
+[class~="leading-8"] { line-height: 2rem; }
+[class~="tracking-wider"] { letter-spacing: .05em; }
+[class~="tracking-widest"] { letter-spacing: .1em; }
+[class~="rounded-lg"] { border-radius: .5rem; }
+[class~="rounded-xl"] { border-radius: .75rem; }
+[class~="rounded-2xl"] { border-radius: 1rem; }
+[class~="rounded-full"] { border-radius: 9999px; }
+[class~="border"] { border: 1px solid #dfe5e1; }
+[class~="border-b"] { border-bottom: 1px solid #e5e9e5; }
+[class~="border-t"] { border-top: 1px solid #e5e9e5; }
+[class~="bg-white"] { background: white; }
+[class~="bg-[#f7f8f5]"] { background: #f7f8f5; }
+[class~="bg-[#fbfcfa]/90"] { background: rgb(251 252 250 / .9); }
+[class~="bg-[#fafbf9]"] { background: #fafbf9; }
+[class~="bg-[#f1f3ef]"] { background: #f1f3ef; }
+[class~="bg-[#f4f6f2]"] { background: #f4f6f2; }
+[class~="bg-[#f5f7f3]"] { background: #f5f7f3; }
+[class~="bg-[#0e2119]/60"] { background: rgb(14 33 25 / .6); }
+[class~="bg-[#123e2e]"] { background: #123e2e; }
+[class~="bg-[#183e30]"] { background: #183e30; }
+[class~="text-brand"] { color: #156b4b; }
+[class~="text-white"] { color: white; }
+[class~="text-red-700"] { color: #b91c1c; }
+[class~="text-[#7c867f]"] { color: #7c867f; }
+[class~="text-[#7a847e]"] { color: #7a847e; }
+[class~="text-[#78827c]"] { color: #78827c; }
+[class~="text-[#6e7973]"] { color: #6e7973; }
+[class~="text-[#66716a]"] { color: #66716a; }
+[class~="text-[#5f6963]"] { color: #5f6963; }
+[class~="text-[#7b857f]"] { color: #7b857f; }
+[class~="text-[#8b948e]"] { color: #8b948e; }
+[class~="text-[#929a95]"] { color: #929a95; }
+[class~="text-[#68726c]"] { color: #68726c; }
+[class~="text-[#77817b]"] { color: #77817b; }
+[class~="text-[#8a938d]"] { color: #8a938d; }
+[class~="text-emerald-700"] { color: #047857; }
+[class~="text-amber-700"] { color: #b45309; }
+[class~="bg-emerald-50"] { background: #ecfdf5; }
+[class~="bg-emerald-100"] { background: #d1fae5; }
+[class~="bg-amber-50"] { background: #fffbeb; }
+[class~="bg-amber-100"] { background: #fef3c7; }
+[class~="bg-red-50"] { background: #fef2f2; }
+[class~="bg-red-100"] { background: #fee2e2; }
+[class~="shadow-xl"] { box-shadow: 0 20px 25px -5px rgb(0 0 0 / .1), 0 8px 10px -6px rgb(0 0 0 / .1); }
+[class~="shadow-[0_1px_2px_rgba(20,45,34,.03)]"] { box-shadow: 0 1px 2px rgb(20 45 34 / .03); }
+[class~="text-[11px]"] { font-size: 11px; }
+[class~="text-[13px]"] { font-size: 13px; }
+[class~="font-[DM_Serif_Display]"] { font-family: Georgia, 'Times New Roman', serif; }
+[class~="backdrop-blur-sm"] { backdrop-filter: blur(4px); }
+[class~="backdrop-blur-xl"] { backdrop-filter: blur(24px); }
+
+@media (min-width: 640px) {
+  [class~="sm:flex-row"] { flex-direction: row; }
+  [class~="sm:flex"] { display: flex; }
+  [class~="sm:block"] { display: block; }
+  [class~="sm:grid-cols-2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  [class~="sm:col-span-2"] { grid-column: span 2 / span 2; }
+  [class~="sm:text-right"] { text-align: right; }
+  [class~="sm:px-8"] { padding-inline: 2rem; }
+}
+@media (min-width: 1024px) {
+  [class~="lg:px-10"] { padding-inline: 2.5rem; }
+  [class~="lg:py-12"] { padding-block: 3rem; }
+  [class~="lg:flex"] { display: flex; }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .invoice-print, .invoice-print * { visibility: visible; }
+  .invoice-print { position: absolute !important; inset: 0 !important; width: 100% !important; box-shadow: none !important; }
+  .no-print { display: none !important; }
+}
+
+/* Compact account menu panel rendered in the CDK overlay. */
+.mat-mdc-menu-panel.portal-account-menu {
+  width: 96px !important;
+  min-width: 96px !important;
+  max-width: 96px !important;
+  margin-top: 3px !important;
+  border: 1px solid #e0ece9 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 5px 12px rgb(16 61 69 / .15) !important;
+}
+.mat-mdc-menu-panel.portal-account-menu .mat-mdc-menu-content { padding: 2px 0 !important; }
+.mat-mdc-menu-panel.portal-account-menu .mat-mdc-menu-item { min-width: 96px !important; min-height: 28px !important; height: 28px !important; padding: 0 6px !important; color: #24475b !important; font-size: 11px !important; font-weight: 600 !important; white-space: nowrap !important; }
+.mat-mdc-menu-panel.portal-account-menu .mat-mdc-menu-item:hover { background: #eef8f6 !important; color: #087b80 !important; }
+.mat-mdc-menu-panel.portal-account-menu .mat-mdc-menu-item .mat-icon { width: 15px !important; height: 15px !important; margin-right: 4px !important; color: #267b86 !important; font-size: 15px !important; }
+.pdf-upload { display: grid; gap: .45rem; padding: .8rem; border: 1px dashed #9eb8c0; border-radius: .75rem; background: #f7fafb; color: #29435b; font-size: .82rem; font-weight: 600; }
+.pdf-upload input { width: 100%; font-size: .78rem; font-weight: 400; }
+.pdf-reading { margin: 0; color: #0878c9; font-size: .8rem; }
+.pdf-error { margin: 0; color: #b42318; font-size: .8rem; }
+.invoice-form-card { max-width: 64rem; }
+.invoice-form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.invoice-form-span-3 { grid-column: 1 / -1; }
+@media (max-width: 900px) {
+  .invoice-form-card { max-width: 42rem; }
+  .invoice-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .invoice-form-span-3 { grid-column: auto; }
+}
