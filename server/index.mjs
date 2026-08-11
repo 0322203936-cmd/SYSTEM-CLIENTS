@@ -277,6 +277,14 @@ async function extractInvoicePdf(buffer) {
   const linePoMatch = text.match(/PO,?\s*Number[\s\S]{0,80}?20\d{2}-\d{2}-\d{2}\s+([^\r\n]+)/i);
   const oldTotalMatch = text.match(/Total\s+\$\s*([\d,]+\.\d{2})/i);
 
+  // Nuevo Formato Alternativo (Trader Joe's): INVOICE DATE, INVOICE #, ORDER #, Location ID, Invoice Total
+  const tjAltDateMatch = text.match(/INVOICE\s+DATE:\s*[\r\n]*\s*(20\d{2}-\d{2}-\d{2})/i);
+  const tjAltNumberMatch = text.match(/INVOICE\s*#:\s*([A-Z0-9-]+)/i);
+  const tjAltPoMatch = text.match(/ORDER\s*#:\s*([A-Z0-9-]+)/i);
+  const tjAltTotalMatch = text.match(/Invoice\s+Total\s*\$\s*([\d,]+\.\d{2})/i);
+  const tjAltLocationMatch = text.match(/Location\s*ID:[^\r\n]*[\r\n]+\s*([^\r\n]+)/i);
+  const tjAltClient = (tjAltDateMatch && tjAltNumberMatch && text.match(/Trader Joe's/i)) ? "Trader Joe's" : '';
+
   // Formato Trader Joe's / Fontana: Invoice #, Order Number, Invoice Date e Invoice Total.
   const fontanaDateMatch = text.match(/PO\s+Date\s*:\s*[\r\n]+\s*(\d{1,2})\/(\d{1,2})\/(20\d{2})/i);
   const fontanaNumberMatch = text.match(/Invoice\s*#\s*:\s*([A-Z0-9-]+)/i);
@@ -325,11 +333,12 @@ async function extractInvoicePdf(buffer) {
       : '');
 
   // Este formato debe usar PO Date antes de cualquier detector genérico de fechas.
-  const issued = fontanaIssued || oldDateMatch?.[1] || newIssued || pacificaIssued;
-  const folio = oldNumberMatch?.[1] || newNumberMatch?.[1] || pacificaInvoiceMatch?.[1] || originInvoiceMatch?.[1] || pacificaWInvoiceMatch?.[1] || fontanaNumberMatch?.[1] || '';
-  const rawClient = oldClientMatch?.[1] || newClientAfterTotalMatch?.[1] || newClientMatch?.[1] || pacificaClient || fontanaClientMatch?.[1] || '';
-  const totalValue = oldTotalMatch?.[1] || newTotalMatch?.[1] || totalDollarsPrefixMatch?.[1] || pacificaTotalMatch?.[1] || pacificaTopAmountMatch?.[1] || labeledTotalMatch?.[1] || fontanaTotalMatch?.[1] || '';
+  const issued = tjAltDateMatch?.[1] || fontanaIssued || oldDateMatch?.[1] || newIssued || pacificaIssued;
+  const folio = tjAltNumberMatch?.[1] || oldNumberMatch?.[1] || newNumberMatch?.[1] || pacificaInvoiceMatch?.[1] || originInvoiceMatch?.[1] || pacificaWInvoiceMatch?.[1] || fontanaNumberMatch?.[1] || '';
+  const rawClient = tjAltClient || oldClientMatch?.[1] || newClientAfterTotalMatch?.[1] || newClientMatch?.[1] || pacificaClient || fontanaClientMatch?.[1] || '';
+  const totalValue = tjAltTotalMatch?.[1] || oldTotalMatch?.[1] || newTotalMatch?.[1] || totalDollarsPrefixMatch?.[1] || pacificaTotalMatch?.[1] || pacificaTopAmountMatch?.[1] || labeledTotalMatch?.[1] || fontanaTotalMatch?.[1] || '';
   const poCandidates = [
+    tjAltPoMatch?.[1],
     standalonePoMatch?.[1],
     splitPoMatch ? `${splitPoMatch[1]}${splitPoMatch[2]}` : '',
     oldPoMatch?.[1],
@@ -349,7 +358,9 @@ async function extractInvoicePdf(buffer) {
     throw new Error('No se pudieron detectar todos los datos principales de la factura.');
   }
   const client = rawClient.replace(/\s+\d{3,}\s+.*$/, '').trim();
-  const location = fontanaLocationMatch?.[1]?.replace(/\s+XDOCK\b.*$/i, '').trim() || '';
+  const location = (tjAltLocationMatch?.[1] || fontanaLocationMatch?.[1] || '')
+    .replace(/\s+XDOCK\b.*$/i, '')
+    .trim();
   return {
     folio,
     client,
