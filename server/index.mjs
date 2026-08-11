@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, 'data');
 const dataFile = path.join(dataDir, 'database.json');
 const uploadsDir = path.join(dataDir, 'uploads');
-const reconciliationWorkbook = path.join(__dirname, '..', 'Facturas - INVOICE - Todos los Documentos_20260808.xlsx');
+const reconciliationWorkbook = path.join(__dirname, '..', 'consolidacion.xlsx');
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET || 'cambia-esta-clave-en-produccion';
 const app = express();
@@ -398,8 +398,17 @@ app.get('/api/invoices', authenticate, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.post('/api/reconciliation/upload', authenticate, adminOnly, upload.single('excel'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Por favor selecciona un archivo de Excel.' });
+    await fs.writeFile(reconciliationWorkbook, req.file.buffer);
+    res.json({ message: 'Archivo cargado correctamente.' });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/reconciliation', authenticate, adminOnly, async (_req, res, next) => {
   try {
+    try { await fs.access(reconciliationWorkbook); } catch { return res.json({ rows: [], totals: { excel: 0, found: 0, missing: 0 }, source: 'No hay archivo cargado' }); }
     const db = await readDb();
     const workbook = XLSX.readFile(reconciliationWorkbook, { cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];

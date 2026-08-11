@@ -32,7 +32,7 @@ const LOGIN_COPY = {
     registeredInvoices: 'invoices registered', paid: 'Paid', completedPayments: 'Completed payments', outstanding: 'Outstanding',
     followUp: 'Requires follow-up', searchPlaceholder: 'Search by number, client, or description', all: 'All', allStatuses: 'All', allCustomers: 'All customers', dateRange: 'Date range', receivingFilter: 'Receiving', withReceiving: 'With receiving', withoutReceiving: 'Without receiving', pending: 'Pending', overdue: 'Overdue',
     invoice: 'Invoice', customer: 'Customer', issued: 'Issued', due: 'Due date', amount: 'Amount', status: 'Status', action: 'Action',
-    reconciliation: 'Reconciliation', systemInvoices: 'Invoices in system', excelInvoices: 'Invoices in ContPAQ', filterByDate: 'Filter by date', refresh: 'Refresh', folioLabel: 'Invoice', seriesPo: 'Series / PO', dateLabel: 'Date', resultLabel: 'Result', foundResult: 'Found', missingResult: 'Missing', readingExcel: 'Reading Excel…', noReconciliation: 'No invoices to reconcile.',
+    reconciliation: 'Reconciliation', uploadExcel: 'Upload Excel', systemInvoices: 'Invoices in system', excelInvoices: 'Invoices in ContPAQ', filterByDate: 'Filter by date', refresh: 'Refresh', folioLabel: 'Invoice', seriesPo: 'Series / PO', dateLabel: 'Date', resultLabel: 'Result', foundResult: 'Found', missingResult: 'Missing', readingExcel: 'Reading Excel…', noReconciliation: 'No invoices to reconcile.',
     viewDetails: 'View details', viewInvoice: 'Invoice PDF', viewReceiving: 'Receiving', uploadReceiving: 'Upload receiving', noResults: 'No invoices match these filters.', systemFooter: 'Invoice management and client portal',
     invoiceData: 'Invoice information', invoiceNumber: 'Invoice No.', poNumber: 'PO Number', invoicePdf: 'Invoice PDF', receivingPdf: 'Receiving PDF', readingPdf: 'Reading invoice PDF...', customerName: 'Customer name *', email: 'Email address', concept: 'Description *',
     issueDate: 'Issue date', dueDate: 'Due date', amountUsd: 'Amount (USD)', cancel: 'Cancel', createInvoice: 'Create invoice',
@@ -76,7 +76,7 @@ const LOGIN_COPY = {
     passwordEdit: 'Nueva contraseña (vacío conserva la actual)', passwordHint: 'Mínimo 8 caracteres', saveChanges: 'Guardar cambios', createClient: 'Crear cliente',
     clientCreated: 'Cuenta de cliente creada', clientUpdated: 'Cuenta de cliente actualizada', clientDeleted: 'Cliente eliminado', noClients: 'No hay cuentas de clientes.',
     deactivate: 'Desactivar', activate: 'Activar', deleteClientConfirm: 'Eliminar al cliente', accountCredentials: 'Para agregar otro contacto, usa el mismo nombre del cliente y un correo diferente.', clientAccount: 'Cuenta de cliente',
-    reconciliation: 'Conciliación', systemInvoices: 'Facturas en el sistema', excelInvoices: 'Facturas en ContPAQ', filterByDate: 'Filtrar por fecha', refresh: 'Actualizar', folioLabel: 'Factura', seriesPo: 'Serie / PO', dateLabel: 'Fecha', resultLabel: 'Resultado', foundResult: 'Encontrada', missingResult: 'Faltante', readingExcel: 'Leyendo Excel…', noReconciliation: 'No hay facturas para conciliar.',
+    reconciliation: 'Conciliación', uploadExcel: 'Subir Excel', systemInvoices: 'Facturas en el sistema', excelInvoices: 'Facturas en ContPAQ', filterByDate: 'Filtrar por fecha', refresh: 'Actualizar', folioLabel: 'Factura', seriesPo: 'Serie / PO', dateLabel: 'Fecha', resultLabel: 'Resultado', foundResult: 'Encontrada', missingResult: 'Faltante', readingExcel: 'Leyendo Excel…', noReconciliation: 'No hay facturas para conciliar.',
     companyName: 'PACIFICA FARMS', loginDescription: 'Tu solución para consultar tus facturas y dar seguimiento a tus pagos.', emailLabel: 'Correo electrónico *', continueLabel: 'Continuar', signInLabel: 'Ingresar', loginWithLabel: 'Ingresar a Pacifica', joinUs: 'Crear cuenta', joinConnect: 'Conectar', forgotPassword: '¿Olvidaste tu contraseña?'
   }
 } as const;
@@ -211,7 +211,7 @@ export class App {
       const customer = this.customerFilter() === 'all' || invoice.client === this.customerFilter();
       const from = !this.dateFrom() || invoice.issued >= this.dateFrom();
       const to = !this.dateTo() || invoice.issued <= this.dateTo();
-      const text = `${invoice.folio} ${invoice.client} ${invoice.concept}`.toLowerCase();
+      const text = `${invoice.folio} ${invoice.poNumber || ''} ${invoice.client} ${invoice.concept} ${invoice.amount}`.toLowerCase();
       return allowed && receiving && customer && from && to && (!query || text.includes(query));
     }).sort((a, b) => {
       const key = this.invoiceSortKey();
@@ -241,10 +241,12 @@ export class App {
   pending = computed(() => this.filteredInvoices().filter(item => item.status !== 'Pagada').reduce((sum, item) => sum + item.amount, 0));
   paid = computed(() => this.filteredInvoices().filter(item => item.status === 'Pagada').reduce((sum, item) => sum + item.amount, 0));
   filteredReconciliationRows = computed(() => {
+    const query = this.search().trim().toLowerCase();
     const rows = this.reconciliationRows().filter(row => {
       const from = !this.reconciliationDateFrom() || row.date >= this.reconciliationDateFrom();
       const to = !this.reconciliationDateTo() || row.date <= this.reconciliationDateTo();
-      return from && to;
+      const text = `${row.folio} ${row.series || ''} ${row.client} ${row.total}`.toLowerCase();
+      return from && to && (!query || text.includes(query));
     });
     const sort = this.reconciliationSort();
     return [...rows].sort((a, b) => {
@@ -709,6 +711,24 @@ export class App {
         this.reconciliationTotals.set(result.totals);
         this.reconciliationSource.set(result.source);
         this.reconciliationLoading.set(false);
+      },
+      error: error => {
+        this.reconciliationLoading.set(false);
+        this.notify(this.errorMessage(error));
+      }
+    });
+  }
+
+  uploadReconciliationExcel(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    this.reconciliationLoading.set(true);
+    const formData = new FormData();
+    formData.append('excel', file);
+    this.http.post<{message: string}>('/api/reconciliation/upload', formData, this.authOptions()).subscribe({
+      next: (res) => {
+        this.notify(res.message);
+        this.loadReconciliation();
       },
       error: error => {
         this.reconciliationLoading.set(false);
