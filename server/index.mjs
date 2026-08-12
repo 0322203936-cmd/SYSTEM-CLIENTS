@@ -374,7 +374,7 @@ async function extractInvoicePdf(buffer) {
 }
 
 function authenticate(req, res, next) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token;
   if (!token) return res.status(401).json({ message: 'Sesión requerida.' });
   try { req.user = jwt.verify(token, JWT_SECRET); next(); }
   catch { return res.status(401).json({ message: 'La sesión expiró. Ingresa nuevamente.' }); }
@@ -606,6 +606,44 @@ app.delete('/api/users/:id', authenticate, adminOnly, async (req, res, next) => 
     db.users.splice(index, 1);
     await writeDb(db);
     res.status(204).send();
+  } catch (error) { next(error); }
+});
+
+app.get('/api/invoices/:id/pdf', authenticate, async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const invoice = db.invoices.find(item => item.id === Number(req.params.id));
+    if (!invoice) return res.status(404).json({ message: 'Factura no encontrada.' });
+    if (req.user.role !== 'admin' && (invoice.clientKey || normalizeClientKey(invoice.client)) !== req.user.clientKey && invoice.email?.toLowerCase() !== req.user.email?.toLowerCase()) {
+      return res.status(403).json({ message: 'No tienes permiso.' });
+    }
+    const filePath = path.join(uploadsDir, invoice.invoicePdfPath || `${invoice.id}-invoice.pdf`);
+    try {
+      await fs.access(filePath);
+      res.download(filePath, invoice.invoiceFileName || `Invoice-${invoice.folio}.pdf`);
+    } catch {
+      if (invoice.invoiceSharePointUrl) res.redirect(invoice.invoiceSharePointUrl);
+      else res.status(404).json({ message: 'El archivo no está disponible.' });
+    }
+  } catch (error) { next(error); }
+});
+
+app.get('/api/invoices/:id/receiving-pdf', authenticate, async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const invoice = db.invoices.find(item => item.id === Number(req.params.id));
+    if (!invoice) return res.status(404).json({ message: 'Factura no encontrada.' });
+    if (req.user.role !== 'admin' && (invoice.clientKey || normalizeClientKey(invoice.client)) !== req.user.clientKey && invoice.email?.toLowerCase() !== req.user.email?.toLowerCase()) {
+      return res.status(403).json({ message: 'No tienes permiso.' });
+    }
+    const filePath = path.join(uploadsDir, invoice.receivingPdfPath || `${invoice.id}-receiving.pdf`);
+    try {
+      await fs.access(filePath);
+      res.download(filePath, invoice.receivingFileName || `Receiving-${invoice.folio}.pdf`);
+    } catch {
+      if (invoice.receivingSharePointUrl) res.redirect(invoice.receivingSharePointUrl);
+      else res.status(404).json({ message: 'El archivo no está disponible.' });
+    }
   } catch (error) { next(error); }
 });
 

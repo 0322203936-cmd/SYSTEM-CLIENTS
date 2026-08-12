@@ -552,9 +552,15 @@ export class App {
     if (this.newInvoice.issued) this.newInvoice.due = this.addOneMonth(this.newInvoice.issued);
   }
 
-  openPdf(url: string | undefined) {
-    if (url) window.open(url, '_blank', 'noopener');
-    else this.notify(this.language() === 'es' ? 'Este archivo todavía no está disponible.' : 'This file is not available yet.');
+  openPdf(type: 'invoice' | 'receiving', invoice: Invoice) {
+    const url = type === 'invoice' ? invoice.invoiceSharePointUrl : invoice.receivingSharePointUrl;
+    if (!url && !invoice.id) {
+      this.notify(this.language() === 'es' ? 'Este archivo todavía no está disponible.' : 'This file is not available yet.');
+      return;
+    }
+    const token = sessionStorage.getItem('fc-token');
+    const endpoint = `/api/invoices/${invoice.id}/${type === 'invoice' ? 'pdf' : 'receiving-pdf'}?token=${token}`;
+    window.open(endpoint, '_blank', 'noopener');
   }
 
   saveInvoice() {
