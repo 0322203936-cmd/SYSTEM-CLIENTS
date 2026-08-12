@@ -620,7 +620,9 @@ app.get('/api/invoices/:id/pdf', authenticate, async (req, res, next) => {
     const filePath = path.join(uploadsDir, invoice.invoicePdfPath || `${invoice.id}-invoice.pdf`);
     try {
       await fs.access(filePath);
-      res.download(filePath, invoice.invoiceFileName || `Invoice-${invoice.folio}.pdf`);
+      res.setHeader('Content-Disposition', `inline; filename="${invoice.invoiceFileName || `Invoice-${invoice.folio}.pdf`}"`);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.sendFile(filePath);
     } catch {
       if (invoice.invoiceSharePointUrl) res.redirect(invoice.invoiceSharePointUrl);
       else res.status(404).json({ message: 'El archivo no está disponible.' });
@@ -639,7 +641,9 @@ app.get('/api/invoices/:id/receiving-pdf', authenticate, async (req, res, next) 
     const filePath = path.join(uploadsDir, invoice.receivingPdfPath || `${invoice.id}-receiving.pdf`);
     try {
       await fs.access(filePath);
-      res.download(filePath, invoice.receivingFileName || `Receiving-${invoice.folio}.pdf`);
+      res.setHeader('Content-Disposition', `inline; filename="${invoice.receivingFileName || `Receiving-${invoice.folio}.pdf`}"`);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.sendFile(filePath);
     } catch {
       if (invoice.receivingSharePointUrl) res.redirect(invoice.receivingSharePointUrl);
       else res.status(404).json({ message: 'El archivo no está disponible.' });
