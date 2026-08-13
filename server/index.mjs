@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import XLSX from 'xlsx';
 import { PDFParse } from 'pdf-parse';
+import { PDFDocument } from 'pdf-lib';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -253,6 +254,27 @@ async function removeLocalFile(fileName) {
   try { await fs.unlink(path.join(uploadsDir, fileName)); } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
+}
+
+async function ensurePdf(file) {
+  if (!file) return file;
+  const mime = file.mimetype.toLowerCase();
+  if (mime === 'image/jpeg' || mime === 'image/png') {
+    const pdfDoc = await PDFDocument.create();
+    let image;
+    if (mime === 'image/jpeg') {
+      image = await pdfDoc.embedJpg(file.buffer);
+    } else {
+      image = await pdfDoc.embedPng(file.buffer);
+    }
+    const page = pdfDoc.addPage([image.width, image.height]);
+    page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+    const pdfBytes = await pdfDoc.save();
+    file.buffer = Buffer.from(pdfBytes);
+    file.mimetype = 'application/pdf';
+    file.originalname = file.originalname.replace(/\.(jpe?g|png)$/i, '.pdf');
+  }
+  return file;
 }
 
 function addOneMonth(dateText) {
@@ -662,7 +684,8 @@ app.post('/api/invoices/parse', authenticate, adminOnly, upload.fields([{ name: 
 app.post('/api/invoices', authenticate, adminOnly, upload.fields([{ name: 'invoicePdf', maxCount: 1 }, { name: 'receivingPdf', maxCount: 1 }]), async (req, res, next) => {
   try {
     const invoiceFile = req.files?.invoicePdf?.[0];
-    const receivingFile = req.files?.receivingPdf?.[0];
+    let receivingFile = req.files?.receivingPdf?.[0];
+    receivingFile = await ensurePdf(receivingFile);
     const extracted = invoiceFile ? await extractInvoicePdf(invoiceFile.buffer) : {};
     // Los cambios hechos manualmente en el formulario tienen prioridad sobre el PDF.
     const { folio, poNumber, client, location, email, concept, issued, due, amount, status = 'Pendiente' } = { ...extracted, ...req.body };
@@ -718,8 +741,9 @@ app.patch('/api/invoices/:id', authenticate, adminOnly, async (req, res, next) =
 
 app.patch('/api/invoices/:id/receiving', authenticate, adminOnly, upload.single('receivingPdf'), async (req, res, next) => {
   try {
-    const receivingFile = req.file;
+    let receivingFile = req.file;
     if (!receivingFile) return res.status(400).json({ message: 'Selecciona el PDF de recibimiento.' });
+    receivingFile = await ensurePdf(receivingFile);
     const db = await readDb();
     const invoice = db.invoices.find(item => item.id === Number(req.params.id));
     if (!invoice) return res.status(404).json({ message: 'Factura no encontrada.' });
