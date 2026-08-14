@@ -246,7 +246,8 @@ table td { vertical-align: middle; }
 .portal-invoice-number { color: #0878c9; font-size: .78rem; font-weight: 500; }
 .portal-status { display: inline-flex; border-radius: 20px; padding: .25rem .65rem; font-size: .7rem; font-weight: 600; }
 .portal-status-paid { background: #e8f6e9; color: #438b36; }
-.portal-status-pending { background: #fff6dc; color: #a67519; }
+.portal-status-pending { background: transparent; color: #a67519; padding: 0; }
+.portal-status-received { background: #0c6c77; color: #ffffff; }
 .portal-status-overdue { background: #ffe9e9; color: #bb3c3c; }
 
 .portal-main { background: #fff; }
