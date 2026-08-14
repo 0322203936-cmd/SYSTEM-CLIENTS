@@ -30,7 +30,7 @@ const LOGIN_COPY = {
     manageTitle: 'Invoice management', myInvoices: 'My invoices', manageSubtitle: 'Manage and track your clients’ invoices.',
     clientSubtitle: 'View the status and details of all your documents.', newInvoice: 'New invoice', totalBilling: 'Total billing',
     registeredInvoices: 'invoices registered', paid: 'Paid', completedPayments: 'Completed payments', outstanding: 'Outstanding',
-    followUp: 'Requires follow-up', searchPlaceholder: 'Search by number, client, or description', all: 'All', allStatuses: 'All', allCustomers: 'All customers', dateRange: 'Date range', receivingFilter: 'Receiving', withReceiving: 'With receiving', withoutReceiving: 'Without receiving', pending: 'Pending', overdue: 'Overdue',
+    followUp: 'Requires follow-up', searchPlaceholder: 'Search by number, client, or description', all: 'All', allStatuses: 'All', allCustomers: 'All customers', dateRange: 'Date range', receivingFilter: 'Receiving', withReceiving: 'With receiving', withoutReceiving: 'Without receiving', pending: 'Pending', overdue: 'Overdue', received: 'Received',
     invoice: 'Invoice', customer: 'Customer', issued: 'Issued', due: 'Due date', amount: 'Amount', status: 'Status', action: 'Action',
     reconciliation: 'Reconciliation', uploadExcel: 'Upload Excel', systemInvoices: 'Invoices in system', excelInvoices: 'Invoices in ContPAQ', filterByDate: 'Filter by date', refresh: 'Refresh', folioLabel: 'Invoice', seriesPo: 'Series / PO', dateLabel: 'Date', resultLabel: 'Result', foundResult: 'Found', missingResult: 'Missing', readingExcel: 'Reading Excel…', noReconciliation: 'No invoices to reconcile.',
     viewDetails: 'View details', viewInvoice: 'Invoice PDF', viewReceiving: 'Receiving', uploadReceiving: 'Upload receiving', noResults: 'No invoices match these filters.', systemFooter: 'Invoice management and client portal',
@@ -61,7 +61,7 @@ const LOGIN_COPY = {
     manageTitle: 'Gestión de facturas', myInvoices: 'Mis facturas', manageSubtitle: 'Administra y da seguimiento a la facturación de tus clientes.',
     clientSubtitle: 'Consulta el estado y detalle de todos tus comprobantes.', newInvoice: 'Nueva factura', totalBilling: 'Facturación total',
     registeredInvoices: 'facturas registradas', paid: 'Pagado', completedPayments: 'Cobros completados', outstanding: 'Por cobrar',
-    followUp: 'Requiere seguimiento', searchPlaceholder: 'Buscar por folio, cliente o concepto', all: 'Todas', allStatuses: 'Todos', allCustomers: 'Todos los clientes', dateRange: 'Rango de fechas', receivingFilter: 'Recibimiento', withReceiving: 'Con recibimiento', withoutReceiving: 'Sin recibimiento', pending: 'Pendiente', overdue: 'Vencida',
+    followUp: 'Requiere seguimiento', searchPlaceholder: 'Buscar por folio, cliente o concepto', all: 'Todas', allStatuses: 'Todos', allCustomers: 'Todos los clientes', dateRange: 'Rango de fechas', receivingFilter: 'Recibimiento', withReceiving: 'Con recibimiento', withoutReceiving: 'Sin recibimiento', pending: 'Pendiente', overdue: 'Vencida', received: 'Recibido',
     invoice: 'Factura', customer: 'Cliente', issued: 'Emisión', due: 'Vencimiento', amount: 'Importe', status: 'Estado', action: 'Acción',
     viewDetails: 'Ver detalle', viewInvoice: 'PDF de factura', viewReceiving: 'Recibimiento', uploadReceiving: 'Subir recibimiento', noResults: 'No encontramos facturas con esos filtros.', systemFooter: 'Sistema de consulta y administración',
     invoiceData: 'Datos del comprobante', invoiceNumber: 'Número de factura', poNumber: 'Número PO', invoicePdf: 'PDF de factura', receivingPdf: 'PDF de recibimiento', readingPdf: 'Leyendo PDF de factura...', customerName: 'Nombre del cliente *', email: 'Correo electrónico', concept: 'Concepto *',
@@ -388,8 +388,12 @@ export class App {
 
   t(key: keyof typeof LOGIN_COPY.en) { return LOGIN_COPY[this.language()][key]; }
 
-  statusLabel(status: Status) {
-    return status === 'Pagada' ? this.t('paid') : status === 'Pendiente' ? this.t('pending') : this.t('overdue');
+  statusLabel(invoice: Invoice) {
+    if (invoice.status === 'Pagada') return this.t('paid');
+    if (invoice.status === 'Pendiente') {
+      return invoice.receivingSharePointUrl ? this.t('received') : this.t('pending');
+    }
+    return this.t('overdue');
   }
 
   login() {
