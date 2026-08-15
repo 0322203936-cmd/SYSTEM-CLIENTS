@@ -588,6 +588,18 @@ export class App {
     window.open(endpoint, '_blank', 'noopener');
   }
 
+  hasCreditPdf(invoice: Invoice): boolean {
+    return !!(invoice.credits && invoice.credits.some(c => !!c.creditSharePointUrl));
+  }
+
+  openCreditPdf(invoice: Invoice, event: Event) {
+    event.stopPropagation();
+    const credit = invoice.credits?.find(c => !!c.creditSharePointUrl);
+    if (credit?.creditSharePointUrl) {
+      window.open(credit.creditSharePointUrl, '_blank', 'noopener');
+    }
+  }
+
   saveInvoice() {
     const amount = Number(this.newInvoice.amount);
     if (!this.newInvoice.client || !this.newInvoice.email || !this.newInvoice.concept || this.newInvoice.amount === undefined || this.newInvoice.amount === null || !Number.isFinite(amount) || amount < 0) return;
