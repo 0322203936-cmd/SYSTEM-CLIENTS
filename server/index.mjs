@@ -833,9 +833,9 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
         (inv.folio && normalizeReference(inv.folio) === poTarget)
       );
 
-      if (!invoice || !invoice.sharePointStorage) {
+      if (!invoice) {
         skipped++;
-        continue; // No matching invoice or missing storage info
+        continue; // No matching invoice
       }
       
       // Check for duplicate credit
@@ -846,7 +846,7 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
       }
 
       // Move in SharePoint
-      const storage = invoice.sharePointStorage;
+      const storage = invoice.sharePointStorage || invoice;
       const clientFolder = await getOrCreateFolder(driveId, root.id, safeFolderName(storage.client));
       const locationFolder = storage.location
         ? await getOrCreateFolder(driveId, clientFolder.id, safeFolderName(storage.location))
