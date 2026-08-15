@@ -254,15 +254,15 @@ table td { vertical-align: middle; }
 .portal-content { max-width: none; margin: 0; min-height: calc(100vh - 82px); padding: 1.35rem 1rem 2rem; background: #fff; box-shadow: none; }
 .portal-table-shell { overflow-x: auto; overflow-y: hidden; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .portal-table { min-width: 1040px; border-bottom: 1px solid #d8e2e7; background: #fff; }
-.portal-table th { padding-top: .62rem; padding-bottom: .62rem; }
-.portal-table td { padding-top: .38rem; padding-bottom: .38rem; line-height: 1.2; }
-.portal-table .portal-actions { min-height: 30px; }
+.portal-table th { padding-top: .4rem; padding-bottom: .4rem; }
+.portal-table td { padding-top: .2rem; padding-bottom: .2rem; line-height: 1.2; }
+.portal-table .portal-actions { min-height: 28px; }
 .portal-table th:nth-child(3),
 .portal-table td:nth-child(3) { border-left: 1px solid #d8e2e7; }
 .portal-table th { background: #056873; }
 .portal-table tbody tr:nth-child(odd) td { background: #fff; }
-.portal-table tbody tr:nth-child(even) td { background: #f4f6f8; }
-.portal-table tbody tr td { border-bottom-color: #e9edef; box-shadow: none; transition: background-color 0.12s ease; }
+.portal-table tbody tr:nth-child(even) td { background: #f9f9f9; }
+.portal-table tbody tr td { border-bottom: 1px solid #f2f2f2; box-shadow: none; transition: background-color 0.12s ease; }
 .portal-table tbody tr:hover td { background: #ecf3e6; }
 .portal-shell { height: 100vh; min-height: 100vh; overflow: hidden; }
 .portal-main { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
