@@ -27,7 +27,9 @@ const LOGIN_COPY = {
     password: 'Password',
     login: 'Continue',
     error: 'Incorrect username or password',
-    admin: 'Administration',
+    admin: 'Administrator',
+    client: 'Client',
+    logout: 'Sign out',
     balance: 'Balance',
     syncCredits: 'Sync Credits',
     usernamePlaceholder: 'you@email.com',
@@ -53,7 +55,8 @@ const LOGIN_COPY = {
     passwordEdit: 'New password (leave blank to keep current)', passwordHint: 'Minimum 8 characters', saveChanges: 'Save changes', createClient: 'Create client',
     clientCreated: 'Client account created', clientUpdated: 'Client account updated', clientDeleted: 'Client deleted', noClients: 'No client accounts found.',
     deactivate: 'Deactivate', activate: 'Activate', deleteClientConfirm: 'Delete client', accountCredentials: 'For another contact, use the same client name and a different email.', clientAccount: 'Client account',
-    companyName: 'PACIFICA FARMS', loginDescription: 'Your solution for viewing invoices and tracking payments.', emailLabel: 'Email *', continueLabel: 'Continue', signInLabel: 'Sign in', loginWithLabel: 'Login With Pacifica', joinUs: 'Join Us', joinConnect: 'Join Connect', forgotPassword: 'Forgot Password?'
+    companyName: 'PACIFICA FARMS', loginDescription: 'Your solution for viewing invoices and tracking payments.', emailLabel: 'Email *', continueLabel: 'Continue', signInLabel: 'Sign in', loginWithLabel: 'Login With Pacifica', joinUs: 'Join Us', joinConnect: 'Join Connect', forgotPassword: 'Forgot Password?',
+    invoicesTab: 'Invoices', clientsTab: 'Clients'
   },
   es: {
     brand: 'Facturación', portal: 'Portal de clientes', tagline: 'Simple. Seguro. Siempre disponible.',
@@ -65,7 +68,9 @@ const LOGIN_COPY = {
     password: 'Contraseña',
     login: 'Continuar',
     error: 'Usuario o contraseña incorrectos',
-    admin: 'Administración',
+    admin: 'Administrador',
+    client: 'Cliente',
+    logout: 'Cerrar sesión',
     balance: 'Saldo',
     syncCredits: 'Sincronizar Créditos',
     username: 'Usuario o correo', usernamePlaceholder: 'tu@correo.com',
