@@ -261,7 +261,7 @@ table td { vertical-align: middle; }
 .portal-table td:nth-child(3) { border-left: 1px solid #d8e2e7; }
 .portal-table th { background: #056873; }
 .portal-table tbody tr:nth-child(odd) td { background: #fff; }
-.portal-table tbody tr:nth-child(even) td { background: #fbfbfc; }
+.portal-table tbody tr:nth-child(even) td { background: #f4f6f8; }
 .portal-table tbody tr td { border-bottom-color: #e9edef; box-shadow: none; transition: background-color 0.12s ease; }
 .portal-table tbody tr:hover td { background: #ecf3e6; }
 .portal-shell { height: 100vh; min-height: 100vh; overflow: hidden; }
