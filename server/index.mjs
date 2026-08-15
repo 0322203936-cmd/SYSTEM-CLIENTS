@@ -409,6 +409,10 @@ async function extractCreditPdf(buffer) {
   const amountStr = totalMatch?.[1] || '0';
   const amount = Number(amountStr.replace(/,/g, ''));
   
+  if (amount <= 0) {
+    console.log(`[DEBUG-PDF] Extracted text for PO ${poNumber}:\n${text}\n-------------------`);
+  }
+
   return { poNumber, creditNumber, amount };
 }
 
