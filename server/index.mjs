@@ -395,6 +395,23 @@ async function extractInvoicePdf(buffer) {
   };
 }
 
+async function extractCreditPdf(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  const text = (await parser.getText()).text.replace(/\u00a0/g, ' ');
+  await parser.destroy();
+  
+  const poMatch = text.match(/(?:^|\r?\n)PO\s*:\s*([A-Z0-9-]+)/i);
+  const creditMatch = text.match(/(?:^|\r?\n)CREDIT\s*:\s*([A-Z0-9-]+)/i);
+  const totalMatch = text.match(/(?:^|\r?\n| )TOTAL\s*\$?\s*([\d,]+\.\d{2})/i) || text.match(/Total\s*\$?\s*([\d,]+\.\d{2})/i);
+  
+  const poNumber = poMatch?.[1]?.trim() || '';
+  const creditNumber = creditMatch?.[1]?.trim() || '';
+  const amountStr = totalMatch?.[1] || '0';
+  const amount = Number(amountStr.replace(/,/g, ''));
+  
+  return { poNumber, creditNumber, amount };
+}
+
 function authenticate(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.token;
   if (!token) return res.status(401).json({ message: 'Sesión requerida.' });
@@ -779,6 +796,95 @@ app.patch('/api/invoices/:id/invoice-pdf', authenticate, adminOnly, upload.singl
     });
     await writeDb(db);
     res.json(invoice);
+  } catch (error) { next(error); }
+});
+
+app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) => {
+  try {
+    if (!sharePointReady()) return res.status(400).json({ message: 'SharePoint no configurado.' });
+    const { driveId } = await getSharePointDrive();
+    const root = await getOrCreateFolder(driveId, null, sharePoint.rootFolder);
+    const creditFolder = await getOrCreateFolder(driveId, root.id, 'Credit');
+    const filesRes = await graphRequest(`/drives/${driveId}/items/${creditFolder.id}/children?$filter=folder eq null`);
+    const files = filesRes?.value || [];
+    
+    let processed = 0;
+    let skipped = 0;
+    const db = await readDb();
+
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith('.pdf')) continue;
+      if (!file['@microsoft.graph.downloadUrl']) continue;
+      
+      const response = await fetch(file['@microsoft.graph.downloadUrl']);
+      if (!response.ok) continue;
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      const extracted = await extractCreditPdf(buffer);
+      if (!extracted.poNumber || extracted.amount <= 0) {
+        skipped++;
+        continue;
+      }
+
+      const poTarget = normalizeReference(extracted.poNumber);
+      const invoice = db.invoices.find(inv => 
+        (inv.poNumber && normalizeReference(inv.poNumber) === poTarget) || 
+        (inv.folio && normalizeReference(inv.folio) === poTarget)
+      );
+
+      if (!invoice || !invoice.sharePointStorage) {
+        skipped++;
+        continue; // No matching invoice or missing storage info
+      }
+      
+      // Check for duplicate credit
+      if (!invoice.credits) invoice.credits = [];
+      if (invoice.credits.some(c => c.creditNumber === extracted.creditNumber && c.creditNumber !== '')) {
+         skipped++;
+         continue;
+      }
+
+      // Move in SharePoint
+      const storage = invoice.sharePointStorage;
+      const clientFolder = await getOrCreateFolder(driveId, root.id, safeFolderName(storage.client));
+      const locationFolder = storage.location
+        ? await getOrCreateFolder(driveId, clientFolder.id, safeFolderName(storage.location))
+        : clientFolder;
+      const dateFolder = await getOrCreateFolder(driveId, locationFolder.id, storage.issued);
+
+      const finalName = `Credit-${extracted.creditNumber || extracted.poNumber}-${Date.now()}.pdf`;
+      const movedFile = await graphRequest(`/drives/${driveId}/items/${file.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentReference: { id: dateFolder.id },
+          name: finalName
+        })
+      });
+
+      // Save locally
+      await fs.mkdir(uploadsDir, { recursive: true });
+      const creditPdfPath = `${invoice.id}-credit-${Date.now()}.pdf`;
+      await fs.writeFile(path.join(uploadsDir, creditPdfPath), buffer);
+
+      // Update invoice
+      invoice.creditAmount = (invoice.creditAmount || 0) + extracted.amount;
+      invoice.credits.push({
+        creditNumber: extracted.creditNumber,
+        amount: extracted.amount,
+        dateProcessed: new Date().toISOString(),
+        creditPdfPath,
+        creditSharePointUrl: movedFile?.webUrl || ''
+      });
+      processed++;
+    }
+
+    if (processed > 0) {
+      await writeDb(db);
+    }
+    
+    res.json({ message: `Sincronización completada. ${processed} procesados, ${skipped} ignorados.`, processed, skipped });
   } catch (error) { next(error); }
 });
 

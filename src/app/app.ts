@@ -22,11 +22,21 @@ const LOGIN_COPY = {
     headline1: 'Your invoices,', headline2: 'always within reach.',
     description: 'View, organize, and download your documents from one place, wherever you are.',
     secure: 'Secure connection', available: 'Available 24/7', welcome: 'Welcome back',
-    title: 'Sign in to your account', subtitle: 'Enter your details to view your invoices.',
-    username: 'Username or email', usernamePlaceholder: 'you@email.com', password: 'Password',
+    title: 'Account Access',
+    subtitle: 'Sign in to review and manage your invoices.',
+    email: 'Email address',
+    password: 'Password',
+    login: 'Continue',
+    error: 'Incorrect username or password',
+    admin: 'Administration',
+    clientsTab: 'Clients',
+    invoicesTab: 'Invoices',
+    balance: 'Balance',
+    syncCredits: 'Sync Credits',
+    usernamePlaceholder: 'you@email.com',
     show: 'Show', hide: 'Hide', submit: 'Sign in to my account', demo: 'Client demo access',
     protected: 'Your data is protected and encrypted.', connectionError: 'Unable to connect to the server.',
-    admin: 'Administrator', client: 'Client', logout: 'Sign out', adminPanel: 'Admin dashboard', myAccount: 'My account', clientPortalTitle: 'Client Portal', clientPortalSubtitle: 'View your invoices and receiving documents',
+    adminPanel: 'Admin dashboard', myAccount: 'My account', clientPortalTitle: 'Client Portal', clientPortalSubtitle: 'View your invoices and receiving documents',
     manageTitle: 'Invoice management', myInvoices: 'My invoices', manageSubtitle: 'Manage and track your clients’ invoices.',
     clientSubtitle: 'View the status and details of all your documents.', newInvoice: 'New invoice', totalBilling: 'Total billing',
     registeredInvoices: 'invoices registered', paid: 'Paid', completedPayments: 'Completed payments', outstanding: 'Outstanding',
@@ -40,7 +50,7 @@ const LOGIN_COPY = {
     totalLabel: 'Total', invoiceStatus: 'Invoice status', thankYou: 'Thank you for your business.', documentNotice: 'This document is an invoice representation for reference purposes.',
     delete: 'Delete', of: 'of', itemsPerPage: 'items per page', markPaid: 'Mark as paid', printPdf: 'Print / PDF', createdSuccess: 'Invoice created successfully',
     paidSuccess: 'The invoice was marked as paid', deletedSuccess: 'Invoice deleted', deleteConfirm: 'Delete invoice',
-    invoicesTab: 'Invoices', clientsTab: 'Clients', clientManagement: 'Client management', clientManagementSubtitle: 'Create accounts and control access to the portal.',
+    clientManagement: 'Client management', clientManagementSubtitle: 'Create accounts and control access to the portal.',
     newClient: 'New client', activeClients: 'Active clients', inactiveClients: 'Inactive clients', usernameLabel: 'Username', access: 'Access',
     active: 'Active', inactive: 'Inactive', edit: 'Edit', clientData: 'Client account', fullName: 'Full name *', passwordNew: 'Password *',
     passwordEdit: 'New password (leave blank to keep current)', passwordHint: 'Minimum 8 characters', saveChanges: 'Save changes', createClient: 'Create client',
@@ -53,11 +63,21 @@ const LOGIN_COPY = {
     headline1: 'Tus facturas,', headline2: 'siempre a la mano.',
     description: 'Consulta, organiza y descarga tus comprobantes desde un solo lugar, estés donde estés.',
     secure: 'Conexión segura', available: 'Disponible 24/7', welcome: 'Bienvenido de nuevo',
-    title: 'Ingresa a tu cuenta', subtitle: 'Escribe tus datos para consultar tus facturas.',
-    username: 'Usuario o correo', usernamePlaceholder: 'tu@correo.com', password: 'Contraseña',
+    title: 'Acceso a tu cuenta',
+    subtitle: 'Inicia sesión para revisar y gestionar tus facturas.',
+    email: 'Correo electrónico',
+    password: 'Contraseña',
+    login: 'Continuar',
+    error: 'Usuario o contraseña incorrectos',
+    admin: 'Administración',
+    clientsTab: 'Clientes',
+    invoicesTab: 'Facturas',
+    balance: 'Saldo',
+    syncCredits: 'Sincronizar Créditos',
+    username: 'Usuario o correo', usernamePlaceholder: 'tu@correo.com',
     show: 'Ver', hide: 'Ocultar', submit: 'Ingresar a mi cuenta', demo: 'Acceso de demostración para cliente',
     protected: 'Tus datos se encuentran protegidos y cifrados.', connectionError: 'No fue posible conectar con el servidor.',
-    admin: 'Administrador', client: 'Cliente', logout: 'Cerrar sesión', adminPanel: 'Panel administrativo', myAccount: 'Mi cuenta', clientPortalTitle: 'Portal de clientes', clientPortalSubtitle: 'Consulta tus facturas y documentos de recibimiento',
+    adminPanel: 'Panel administrativo', myAccount: 'Mi cuenta', clientPortalTitle: 'Portal de clientes', clientPortalSubtitle: 'Consulta tus facturas y documentos de recibimiento',
     manageTitle: 'Gestión de facturas', myInvoices: 'Mis facturas', manageSubtitle: 'Administra y da seguimiento a la facturación de tus clientes.',
     clientSubtitle: 'Consulta el estado y detalle de todos tus comprobantes.', newInvoice: 'Nueva factura', totalBilling: 'Facturación total',
     registeredInvoices: 'facturas registradas', paid: 'Pagado', completedPayments: 'Cobros completados', outstanding: 'Por cobrar',
@@ -98,6 +118,8 @@ interface Invoice {
   receivingFileName?: string;
   invoiceSharePointUrl?: string;
   receivingSharePointUrl?: string;
+  creditAmount?: number;
+  credits?: { creditNumber: string, amount: number, dateProcessed: string, creditPdfPath: string, creditSharePointUrl: string }[];
 }
 
 interface ReconciliationRow {
@@ -692,6 +714,23 @@ export class App {
   private notify(message: string) {
     this.toast.set(message);
     setTimeout(() => this.toast.set(''), 2600);
+  }
+
+  isSyncingCredits = signal(false);
+
+  syncCredits() {
+    this.isSyncingCredits.set(true);
+    this.http.post<{ message: string }>('/api/credits/sync', {}, this.authOptions()).subscribe({
+      next: res => {
+        this.notify(res.message);
+        this.loadInvoices();
+        this.isSyncingCredits.set(false);
+      },
+      error: error => {
+        this.notify(this.errorMessage(error));
+        this.isSyncingCredits.set(false);
+      }
+    });
   }
 
   private loadInvoices() {
