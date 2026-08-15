@@ -400,9 +400,11 @@ async function extractCreditPdf(buffer) {
   const text = (await parser.getText()).text.replace(/\u00a0/g, ' ');
   await parser.destroy();
   
-  const poMatch = text.match(/(?:^|\r?\n)PO\s*:\s*([A-Z0-9-]+)/i);
+  const poMatch = text.match(/(?:^|\r?\n)P\.?O\.?\s*(?:#|:)?\s*([A-Z0-9-]+)/i);
   const creditMatch = text.match(/(?:^|\r?\n)CREDIT\s*:\s*([A-Z0-9-]+)/i);
-  const totalMatch = text.match(/(?:^|\r?\n| )TOTAL\s*\$?\s*([\d,]+\.\d{2})/i) || text.match(/Total\s*\$?\s*([\d,]+\.\d{2})/i);
+  const totalMatch = text.match(/(?:^|\r?\n| )TOTAL\s*\$?\s*([\d,]+\.\d{2})/i) || 
+                     text.match(/Total\s*\$?\s*([\d,]+\.\d{2})/i) ||
+                     text.match(/\$?\s*([\d,]+\.\d{2})\s+TOTAL/i);
   
   const poNumber = poMatch?.[1]?.trim() || '';
   const creditNumber = creditMatch?.[1]?.trim() || '';
@@ -836,7 +838,8 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
       const poTarget = normalizeReference(extracted.poNumber);
       const invoice = db.invoices.find(inv => 
         (inv.poNumber && normalizeReference(inv.poNumber) === poTarget) || 
-        (inv.folio && normalizeReference(inv.folio) === poTarget)
+        (inv.folio && normalizeReference(inv.folio) === poTarget) ||
+        (inv.invoiceFileName && normalizeReference(inv.invoiceFileName).includes(poTarget))
       );
 
       if (!invoice) {
