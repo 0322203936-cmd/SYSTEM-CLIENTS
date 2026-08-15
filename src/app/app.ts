@@ -32,6 +32,7 @@ const LOGIN_COPY = {
     logout: 'Sign out',
     balance: 'Balance',
     syncCredits: 'Sync Credits',
+    syncInvoices: 'Sync Invoices',
     usernamePlaceholder: 'you@email.com',
     show: 'Show', hide: 'Hide', submit: 'Sign in to my account', demo: 'Client demo access',
     protected: 'Your data is protected and encrypted.', connectionError: 'Unable to connect to the server.',
@@ -56,7 +57,10 @@ const LOGIN_COPY = {
     clientCreated: 'Client account created', clientUpdated: 'Client account updated', clientDeleted: 'Client deleted', noClients: 'No client accounts found.',
     deactivate: 'Deactivate', activate: 'Activate', deleteClientConfirm: 'Delete client', accountCredentials: 'For another contact, use the same client name and a different email.', clientAccount: 'Client account',
     companyName: 'PACIFICA FARMS', loginDescription: 'Your solution for viewing invoices and tracking payments.', emailLabel: 'Email *', continueLabel: 'Continue', signInLabel: 'Sign in', loginWithLabel: 'Login With Pacifica', joinUs: 'Join Us', joinConnect: 'Join Connect', forgotPassword: 'Forgot Password?',
-    invoicesTab: 'Invoices', clientsTab: 'Clients'
+    invoicesTab: 'Invoices', clientsTab: 'Clients',
+    accessInfo: 'Access Information', viewPermissions: 'Viewing Permissions', viewPermissionsDesc: 'Select the companies for which this agent can view invoices and documents.',
+    deleteAccount: 'Delete account', deleteAccountDesc: 'If you delete this user, they will no longer be able to access the portal.',
+    selectUserToManage: 'Select a user from the list to manage their access permissions.'
   },
   es: {
     brand: 'Facturación', portal: 'Portal de clientes', tagline: 'Simple. Seguro. Siempre disponible.',
@@ -73,6 +77,7 @@ const LOGIN_COPY = {
     logout: 'Cerrar sesión',
     balance: 'Saldo',
     syncCredits: 'Sincronizar Créditos',
+    syncInvoices: 'Sincronizar Facturas',
     username: 'Usuario o correo', usernamePlaceholder: 'tu@correo.com',
     show: 'Ver', hide: 'Ocultar', submit: 'Ingresar a mi cuenta', demo: 'Acceso de demostración para cliente',
     protected: 'Tus datos se encuentran protegidos y cifrados.', connectionError: 'No fue posible conectar con el servidor.',
@@ -94,9 +99,12 @@ const LOGIN_COPY = {
     active: 'Activo', inactive: 'Inactivo', edit: 'Editar', clientData: 'Cuenta del cliente', fullName: 'Nombre completo *', passwordNew: 'Contraseña *',
     passwordEdit: 'Nueva contraseña (vacío conserva la actual)', passwordHint: 'Mínimo 8 caracteres', saveChanges: 'Guardar cambios', createClient: 'Crear cliente',
     clientCreated: 'Cuenta de cliente creada', clientUpdated: 'Cuenta de cliente actualizada', clientDeleted: 'Cliente eliminado', noClients: 'No hay cuentas de clientes.',
-    deactivate: 'Desactivar', activate: 'Activar', deleteClientConfirm: 'Eliminar al cliente', accountCredentials: 'Para agregar otro contacto, usa el mismo nombre del cliente y un correo diferente.', clientAccount: 'Cuenta de cliente',
+    deactivate: 'Desactivar', activate: 'Activar', deleteClientConfirm: 'Eliminar al cliente', accountCredentials: 'Para agregar otro contacto, usa el mismo nombre del cliente y un correo diferente.', clientAccount: 'Client account',
     reconciliation: 'Conciliación', uploadExcel: 'Subir Excel', systemInvoices: 'Facturas en el sistema', excelInvoices: 'Facturas en ContPAQ', filterByDate: 'Filtrar por fecha', refresh: 'Actualizar', folioLabel: 'Factura', seriesPo: 'Serie / PO', dateLabel: 'Fecha', resultLabel: 'Resultado', foundResult: 'Encontrada', missingResult: 'Faltante', readingExcel: 'Leyendo Excel…', noReconciliation: 'No hay facturas para conciliar.',
-    companyName: 'PACIFICA FARMS', loginDescription: 'Tu solución para consultar tus facturas y dar seguimiento a tus pagos.', emailLabel: 'Correo electrónico *', continueLabel: 'Continuar', signInLabel: 'Ingresar', loginWithLabel: 'Ingresar a Pacifica', joinUs: 'Crear cuenta', joinConnect: 'Conectar', forgotPassword: '¿Olvidaste tu contraseña?'
+    companyName: 'PACIFICA FARMS', loginDescription: 'Tu solución para consultar tus facturas y dar seguimiento a tus pagos.', emailLabel: 'Correo electrónico *', continueLabel: 'Continuar', signInLabel: 'Ingresar', loginWithLabel: 'Ingresar a Pacifica', joinUs: 'Crear cuenta', joinConnect: 'Conectar', forgotPassword: '¿Olvidaste tu contraseña?',
+    accessInfo: 'Información de Acceso', viewPermissions: 'Permisos de Visualización', viewPermissionsDesc: 'Selecciona las empresas de las cuales este agente podrá visualizar facturas y documentos.',
+    deleteAccount: 'Eliminar cuenta', deleteAccountDesc: 'Si eliminas a este usuario, ya no podrá acceder al portal.',
+    selectUserToManage: 'Selecciona un usuario de la lista para administrar sus permisos de acceso.'
   }
 } as const;
 
@@ -146,6 +154,7 @@ interface ClientUser {
   username: string;
   email: string;
   clientKey?: string;
+  assignedClients?: string[];
   role: 'client';
   active: boolean;
   createdAt?: string;
@@ -166,7 +175,7 @@ export class App {
   loginStep = signal<'email' | 'password'>('email');
   loginError = signal('');
   showPassword = signal(false);
-  user = signal<{ name: string; role: Role; email?: string; clientKey?: string } | null>(null);
+  user = signal<{ name: string; role: Role; email?: string; clientKey?: string; assignedClients?: string[] } | null>(null);
   search = signal('');
   statusFilter = signal<'all' | 'withReceiving' | 'withoutReceiving'>('all');
   customerFilter = signal('all');
@@ -189,7 +198,7 @@ export class App {
   clients = signal<ClientUser[]>([]);
   showClientForm = signal(false);
   editingClient = signal<ClientUser | null>(null);
-  clientForm = { name: '', username: '', email: '', password: '' };
+  clientForm = { name: '', username: '', email: '', password: '', assignedClients: [] as string[] };
   selected = signal<Invoice | null>(null);
   invoiceActionTarget = signal<Invoice | null>(null);
   invoiceActionMenuPosition = signal({ top: 0, left: 0 });
@@ -225,7 +234,10 @@ export class App {
     const current = this.user();
     const query = this.search().trim().toLowerCase();
     return this.invoices().filter(invoice => {
-      const allowed = current?.role === 'admin' || (!!current?.clientKey && invoice.clientKey === current.clientKey) || invoice.email === current?.email;
+      const allowed = current?.role === 'admin' 
+                   || (current?.assignedClients && current.assignedClients.length > 0 && current.assignedClients.includes(invoice.client))
+                   || (!current?.assignedClients?.length && !!current?.clientKey && invoice.clientKey === current.clientKey) 
+                   || invoice.email === current?.email;
       const receiving = this.statusFilter() === 'all'
         || (this.statusFilter() === 'withReceiving' && !!invoice.receivingSharePointUrl)
         || (this.statusFilter() === 'withoutReceiving' && !invoice.receivingSharePointUrl);
@@ -668,9 +680,18 @@ export class App {
   openClientForm(client?: ClientUser) {
     this.editingClient.set(client || null);
     this.clientForm = client
-      ? { name: client.name, username: client.username, email: client.email, password: '' }
-      : { name: '', username: '', email: '', password: '' };
+      ? { name: client.name, username: client.username, email: client.email, password: '', assignedClients: client.assignedClients || [] }
+      : { name: '', username: '', email: '', password: '', assignedClients: [] };
     this.showClientForm.set(true);
+  }
+
+  toggleClientPermission(clientName: string) {
+    const list = this.clientForm.assignedClients;
+    if (list.includes(clientName)) {
+      this.clientForm.assignedClients = list.filter(c => c !== clientName);
+    } else {
+      this.clientForm.assignedClients = [...list, clientName];
+    }
   }
 
   saveClient() {
@@ -706,6 +727,10 @@ export class App {
     this.http.delete(`/api/users/${client.id}`, this.authOptions()).subscribe({
       next: () => {
         this.clients.update(items => items.filter(item => item.id !== client.id));
+        if (this.editingClient()?.id === client.id) {
+          this.editingClient.set(null);
+          this.showClientForm.set(false);
+        }
         this.notify(this.t('clientDeleted'));
       },
       error: error => this.notify(this.errorMessage(error))
@@ -728,6 +753,22 @@ export class App {
   }
 
   isSyncingCredits = signal(false);
+  isSyncingInvoices = signal(false);
+
+  syncInvoices() {
+    this.isSyncingInvoices.set(true);
+    this.http.post<{ message: string }>('/api/invoices/sync', {}, this.authOptions()).subscribe({
+      next: res => {
+        this.notify(res.message);
+        this.loadInvoices();
+        this.isSyncingInvoices.set(false);
+      },
+      error: error => {
+        this.notify(this.errorMessage(error));
+        this.isSyncingInvoices.set(false);
+      }
+    });
+  }
 
   syncCredits() {
     this.isSyncingCredits.set(true);

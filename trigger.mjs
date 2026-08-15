@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 
 const token = jwt.sign(
   { id: 1, role: 'admin', username: 'admin' },
-  'cambia-esta-clave-en-produccion'
+  'fc_2026_7Zp4mQ9xR2vK8nL5sD1wH6cB3tY0gF'
 );
 
 fetch('http://localhost:3000/api/credits/sync', {

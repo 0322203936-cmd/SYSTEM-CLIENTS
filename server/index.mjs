@@ -603,7 +603,7 @@ app.get('/api/users', authenticate, adminOnly, async (_req, res, next) => {
 
 app.post('/api/users', authenticate, adminOnly, async (req, res, next) => {
   try {
-    const { name, username, email, password } = req.body;
+    const { name, username, email, password, assignedClients } = req.body;
     if (!name || !username || !email || !password) return res.status(400).json({ message: 'Nombre, usuario, correo y contraseña son obligatorios.' });
     if (String(password).length < 8) return res.status(400).json({ message: 'La contraseña debe tener al menos 8 caracteres.' });
     const db = await readDb();
@@ -611,7 +611,7 @@ app.post('/api/users', authenticate, adminOnly, async (req, res, next) => {
     const normalizedEmail = String(email).trim().toLowerCase();
     if (db.users.some(user => user.username.toLowerCase() === normalizedUsername)) return res.status(409).json({ message: 'Ese nombre de usuario ya está registrado.' });
     if (db.users.some(user => user.email?.toLowerCase() === normalizedEmail)) return res.status(409).json({ message: 'Ese correo ya está registrado.' });
-    const user = { id: Date.now(), name: String(name).trim(), clientKey: normalizeClientKey(name), username: String(username).trim(), email: normalizedEmail, role: 'client', active: true, createdAt: new Date().toISOString(), passwordHash: await bcrypt.hash(String(password), 12) };
+    const user = { id: Date.now(), name: String(name).trim(), clientKey: normalizeClientKey(name), username: String(username).trim(), email: normalizedEmail, assignedClients: assignedClients || [], role: 'client', active: true, createdAt: new Date().toISOString(), passwordHash: await bcrypt.hash(String(password), 12) };
     db.users.push(user);
     await writeDb(db);
     const { passwordHash, ...safeUser } = user;
@@ -624,7 +624,7 @@ app.patch('/api/users/:id', authenticate, adminOnly, async (req, res, next) => {
     const db = await readDb();
     const user = db.users.find(item => item.id === Number(req.params.id) && item.role === 'client');
     if (!user) return res.status(404).json({ message: 'Cliente no encontrado.' });
-    const { name, username, email, active, password } = req.body;
+    const { name, username, email, active, password, assignedClients } = req.body;
     const normalizedUsername = username ? String(username).trim().toLowerCase() : user.username.toLowerCase();
     const normalizedEmail = email ? String(email).trim().toLowerCase() : user.email;
     if (db.users.some(item => item.id !== user.id && item.username.toLowerCase() === normalizedUsername)) return res.status(409).json({ message: 'Ese nombre de usuario ya está registrado.' });
@@ -634,10 +634,11 @@ app.patch('/api/users/:id', authenticate, adminOnly, async (req, res, next) => {
     if (username) user.username = String(username).trim();
     if (email) user.email = normalizedEmail;
     if (typeof active === 'boolean') user.active = active;
+    if (assignedClients) user.assignedClients = assignedClients;
     if (password) user.passwordHash = await bcrypt.hash(String(password), 12);
     await writeDb(db);
     const { passwordHash, ...safeUser } = user;
-    res.json({ ...safeUser, active: safeUser.active !== false });
+    res.json(safeUser);
   } catch (error) { next(error); }
 });
 
@@ -802,10 +803,86 @@ app.patch('/api/invoices/:id/invoice-pdf', authenticate, adminOnly, upload.singl
     });
     await writeDb(db);
     res.json(invoice);
-  } catch (error) { next(error); }
-});
+    } catch (error) { next(error); }
+  });
 
-app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) => {
+  app.post('/api/invoices/sync', authenticate, adminOnly, async (req, res, next) => {
+    try {
+      if (!sharePointReady()) return res.status(400).json({ message: 'SharePoint no configurado.' });
+      const { driveId } = await getSharePointDrive();
+      const root = await getOrCreateFolder(driveId, null, sharePoint.rootFolder);
+      const filesRes = await graphRequest(`/drives/${driveId}/items/${root.id}/children`);
+      const files = (filesRes?.value || []).filter(f => !f.folder);
+      
+      let processed = 0;
+      let skipped = 0;
+      const db = await readDb();
+  
+      for (const file of files) {
+        if (!file.name.toLowerCase().endsWith('.pdf')) continue;
+        if (!file['@microsoft.graph.downloadUrl']) continue;
+        
+        const response = await fetch(file['@microsoft.graph.downloadUrl']);
+        if (!response.ok) continue;
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        const extracted = await extractInvoicePdf(buffer);
+        if (!extracted.folio || !extracted.amount || !extracted.client) {
+          console.log(`[SYNC INVOICE] Skipped ${file.name}: Missing core fields (folio: ${extracted.folio}, amount: ${extracted.amount}, client: ${extracted.client})`);
+          skipped++;
+          continue;
+        }
+        
+        console.log(`[SYNC INVOICE] Processing ${file.name}: Folio=${extracted.folio}, Client=${extracted.client}, Amount=${extracted.amount}`);
+        
+        const sharePointFiles = await uploadInvoiceFilesToSharePoint({ 
+          client: extracted.client, 
+          location: extracted.location || '', 
+          issued: extracted.issued, 
+          folio: extracted.folio, 
+          invoiceFile: { buffer, originalname: file.name } 
+        });
+        
+        await graphRequest(`/drives/${driveId}/items/${file.id}`, { method: 'DELETE' }).catch(err => console.error(`[SYNC INVOICE] Failed to delete ${file.name}:`, err));
+        
+        const invoice = {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          folio: extracted.folio,
+          poNumber: extracted.poNumber || '',
+          client: extracted.client,
+          clientKey: normalizeClientKey(extracted.client),
+          location: extracted.location || '',
+          email: extracted.email || '',
+          concept: extracted.concept || 'Factura (Auto-Sync)',
+          issued: extracted.issued || new Date().toISOString().split('T')[0],
+          due: extracted.due || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          amount: extracted.amount,
+          status: 'Pendiente',
+          credits: [],
+          creditAmount: 0,
+          invoiceFileName: file.name,
+          invoicePdfPath: '',
+          invoiceSharePointUrl: sharePointFiles.invoice?.webUrl || '',
+          receivingFileName: '',
+          receivingPdfPath: '',
+          receivingSharePointUrl: '',
+          sharePointStorage: { client: extracted.client, location: extracted.location || '', issued: extracted.issued, folio: extracted.folio }
+        };
+        
+        db.invoices.push(invoice);
+        processed++;
+      }
+      
+      if (processed > 0) {
+        await writeDb(db);
+      }
+      
+      res.json({ message: `Sincronización completada. ${processed} procesadas, ${skipped} ignoradas.`, processed, skipped });
+    } catch (error) { next(error); }
+  });
+  
+  app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) => {
   try {
     if (!sharePointReady()) return res.status(400).json({ message: 'SharePoint no configurado.' });
     const { driveId } = await getSharePointDrive();
