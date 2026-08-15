@@ -207,9 +207,9 @@ table td { vertical-align: middle; }
 .portal-empty-grid div { font-size: .9rem; font-weight: 600; }
 .portal-empty-grid span { display: block; margin-top: .7rem; color: #0878c9; font-size: .78rem; }
 .portal-table-shell { overflow: hidden; border: 1px solid #d7e0e5; border-radius: 4px; background: #fff; box-shadow: 0 2px 9px rgb(22 57 79 / .06); }
-.portal-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #29435b; font-size: .78rem; }
+.portal-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: #29435b; font-size: .71rem; }
 .portal-table th:last-child, .portal-table td:last-child { width: 410px; }
-.portal-table th { padding: .8rem .75rem; background: #056b76; color: #fff; border-right: 1px solid rgb(255 255 255 / .28); text-align: left; font-size: .76rem; font-weight: 400; white-space: nowrap; }
+.portal-table th { padding: .8rem .75rem; background: #056b76; color: #fff; border-right: 1px solid rgb(255 255 255 / .28); text-align: left; font-size: .7rem; font-weight: 400; white-space: nowrap; }
 .portal-table td { padding: .8rem .75rem; border-bottom: 1px solid #e8edf0; }
 .portal-table tbody tr:nth-child(even) td { background: #fbfcfd; }
 .portal-table tbody tr:hover td { background: #edf7fb; }
