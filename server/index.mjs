@@ -805,8 +805,8 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
     const { driveId } = await getSharePointDrive();
     const root = await getOrCreateFolder(driveId, null, sharePoint.rootFolder);
     const creditFolder = await getOrCreateFolder(driveId, root.id, 'Credit');
-    const filesRes = await graphRequest(`/drives/${driveId}/items/${creditFolder.id}/children?$filter=folder eq null`);
-    const files = filesRes?.value || [];
+    const filesRes = await graphRequest(`/drives/${driveId}/items/${creditFolder.id}/children`);
+    const files = (filesRes?.value || []).filter(f => !f.folder);
     
     let processed = 0;
     let skipped = 0;
