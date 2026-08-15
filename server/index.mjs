@@ -822,7 +822,9 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
       const buffer = Buffer.from(arrayBuffer);
       
       const extracted = await extractCreditPdf(buffer);
+      console.log(`[SYNC] Extracted from ${file.name}: PO=${extracted.poNumber}, Amount=${extracted.amount}, Credit=${extracted.creditNumber}`);
       if (!extracted.poNumber || extracted.amount <= 0) {
+        console.log(`[SYNC] Skipped ${file.name}: Missing PO or Amount <= 0`);
         skipped++;
         continue;
       }
@@ -834,6 +836,7 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
       );
 
       if (!invoice) {
+        console.log(`[SYNC] Skipped ${file.name}: No matching invoice for PO ${poTarget}`);
         skipped++;
         continue; // No matching invoice
       }
@@ -841,6 +844,7 @@ app.post('/api/credits/sync', authenticate, adminOnly, async (req, res, next) =>
       // Check for duplicate credit
       if (!invoice.credits) invoice.credits = [];
       if (invoice.credits.some(c => c.creditNumber === extracted.creditNumber && c.creditNumber !== '')) {
+         console.log(`[SYNC] Skipped ${file.name}: Duplicate credit number ${extracted.creditNumber}`);
          skipped++;
          continue;
       }
