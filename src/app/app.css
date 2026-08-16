@@ -174,7 +174,7 @@ table td { vertical-align: middle; }
 .portal-heading p:not(.portal-eyebrow) { margin: .4rem 0 0; color: #738395; font-size: .85rem; }
 .portal-heading > button { min-height: 42px; border-radius: 4px; background: #0878c9; color: white; }
 .portal-heading > button mat-icon { margin-right: .35rem; font-size: 1.1rem; }
-.portal-table-filters { display: flex; justify-content: flex-end; align-items: flex-end; gap: 1.15rem; margin: -4.8rem 0 .85rem; }
+.portal-table-filters { display: flex; justify-content: flex-end; align-items: flex-end; gap: 1.15rem; margin: -4.8rem 0 .85rem; position: relative; z-index: 20; }
 .portal-table-filters:not(.portal-receiving-filter) { display: none; }
 .portal-client-view .portal-receiving-filter > label:nth-child(1), .portal-client-view .portal-receiving-filter > label:nth-child(2) { display: none; }
 .portal-client-view .portal-heading { min-height: 0; margin-bottom: 0; }
