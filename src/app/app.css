@@ -118,7 +118,7 @@ table td { vertical-align: middle; }
 .portal-sidebar-footer { display: flex; align-items: center; justify-content: center; gap: .65rem; margin-top: auto; padding: 1.2rem .25rem; border-top: 1px solid rgb(255 255 255 / .14); font-size: .78rem; }
 .portal-brand > span:last-child, .portal-nav-item span, .portal-sidebar-footer span { display: none; }
 .portal-main { min-width: 0; flex: 1; }
-.portal-topbar { position: relative; z-index: 3; display: flex; height: 82px; align-items: center; gap: 1.5rem; border-top: 0; border-bottom: 1px solid #dbe5e8; background: #fff; padding: 0 1.5rem; box-shadow: 0 9px 24px rgb(15 56 76 / .18), 0 2px 6px rgb(15 56 76 / .12); }
+.portal-topbar { position: relative; z-index: 50; display: flex; height: 82px; align-items: center; gap: 1.5rem; border-top: 0; border-bottom: 1px solid #dbe5e8; background: #fff; padding: 0 1.5rem; box-shadow: 0 9px 24px rgb(15 56 76 / .18), 0 2px 6px rgb(15 56 76 / .12); }
 .portal-topbar::before { position: absolute; top: 0; right: 0; left: 0; height: 4px; background: linear-gradient(90deg, #0878c9 0%, #0b8bd5 42%, #16a69e 100%); content: ''; }
 .portal-topbar-title { position: relative; display: grid; min-width: 230px; gap: .12rem; color: #4f7c79; font-size: .68rem; font-weight: 600; letter-spacing: .04em; }
 .portal-topbar-title strong { color: #143b57; font-size: 1.08rem; letter-spacing: -.01em; }
