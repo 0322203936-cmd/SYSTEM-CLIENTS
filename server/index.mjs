@@ -827,12 +827,16 @@ app.patch('/api/invoices/:id/invoice-pdf', authenticate, adminOnly, upload.singl
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         
-        const extracted = await extractInvoicePdf(buffer);
-        if (!extracted.folio || !extracted.amount || !extracted.client) {
-          console.log(`[SYNC INVOICE] Skipped ${file.name}: Missing core fields (folio: ${extracted.folio}, amount: ${extracted.amount}, client: ${extracted.client})`);
+        let extracted;
+        try {
+          extracted = await extractInvoicePdf(buffer);
+        } catch (e) {
+          console.log(`[SYNC INVOICE] Skipped ${file.name}: Error - ${e.message}`);
           skipped++;
           continue;
         }
+        
+        if (!extracted.folio || !extracted.amount || !extracted.client) {
         
         console.log(`[SYNC INVOICE] Processing ${file.name}: Folio=${extracted.folio}, Client=${extracted.client}, Amount=${extracted.amount}`);
         
