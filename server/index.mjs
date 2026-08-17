@@ -837,6 +837,10 @@ app.patch('/api/invoices/:id/invoice-pdf', authenticate, adminOnly, upload.singl
         }
         
         if (!extracted.folio || !extracted.amount || !extracted.client) {
+          console.log(`[SYNC INVOICE] Skipped ${file.name}: Missing core fields (folio: ${extracted.folio}, amount: ${extracted.amount}, client: ${extracted.client})`);
+          skipped++;
+          continue;
+        }
         
         console.log(`[SYNC INVOICE] Processing ${file.name}: Folio=${extracted.folio}, Client=${extracted.client}, Amount=${extracted.amount}`);
         
