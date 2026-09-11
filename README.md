@@ -51,3 +51,11 @@ El resultado se genera dentro de `dist/`.
 ## Importante para producción
 
 Antes de publicar, copia `.env.example` como `.env` y reemplaza `JWT_SECRET` con una clave larga y aleatoria. Para un despliegue con alto volumen conviene sustituir el archivo JSON por PostgreSQL o MySQL y servir todo mediante HTTPS.
+
+### PDFs en Oracle Object Storage
+
+El backend puede usar el bucket privado de Oracle como fuente primaria y conservar SharePoint como respaldo. Si Oracle no está configurado, el comportamiento anterior no cambia.
+
+En el `.env` define `OCI_AUTH_MODE`, `OCI_NAMESPACE`, `OCI_BUCKET_NAME` y `OCI_REGION`. En la VM de Oracle se recomienda `OCI_AUTH_MODE=instance_principal` con una política IAM que permita al recurso leer, escribir y borrar objetos del bucket. En local se puede usar `OCI_AUTH_MODE=config` con un archivo `~/.oci/config`, o `OCI_AUTH_MODE=api_key` con `OCI_TENANCY_ID`, `OCI_USER_ID`, `OCI_FINGERPRINT` y `OCI_PRIVATE_KEY_PATH`.
+
+Las lecturas intentan Oracle, después la copia local y finalmente SharePoint. Las nuevas facturas, recibimientos y créditos se escriben en Oracle y SharePoint; los reemplazos y eliminaciones también mantienen ambos almacenamientos alineados.

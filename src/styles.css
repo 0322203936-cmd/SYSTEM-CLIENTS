@@ -1,6 +1,29 @@
+@import url('https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700');
 @import url('https://fonts.googleapis.com/css2?family=Nunito+Sans:opsz,wght@6..12,400;6..12,500;6..12,600;6..12,700&display=swap');
 @import "@angular/material/prebuilt-themes/indigo-pink.css";
 @import "@progress/kendo-theme-default/dist/default-ocean-blue.css";
+
+/* Paleta del portal Procurant, usada por la vista de Facturas. */
+:root {
+  --pc-navy-alt:    #114267;
+  --pc-green-light: #95cc50;
+  --pc-red:         #d50000;
+  --pc-red-warn:    #d0021b;
+  --pc-orange-dot:  #e9670e;
+  --pc-ink:         #212121;
+  --pc-label:       #424242;
+  --pc-hint:        #757575;
+  --pc-bar-bg:      #f6f6f6;
+  --pc-border:      #e0e0e0;
+  --pc-bg-alt:      #fafafa;
+  --pc-white:       #ffffff;
+  --k-header:       #045a66;
+  --k-header-rule:  #dedede;
+  --k-sorted:       #aed581;
+  --k-link:         #005fa4;
+  --k-hover:        #eaf5dc;
+  --k-alt:          #fafafa;
+}
 
 * { box-sizing: border-box; }
 html, body { background: #fff; }

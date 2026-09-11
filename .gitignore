@@ -11,6 +11,8 @@
 .env
 /server/data/database.json
 /server/data/database.json.tmp
+/server/data/agents.json
+/server/data/agents.json.tmp
 npm-debug.log
 yarn-error.log
 
