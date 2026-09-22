@@ -116,7 +116,7 @@
         @if (user()!.role === 'admin' && canViewPortalModule('reconciliation')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'reconciliation'" (click)="openReconciliation(); taskCenterTab.set('reconciliation')"><kendo-svg-icon [icon]="kendoReconciliationIcon" aria-hidden="true"></kendo-svg-icon><span>{{ t('reconciliation') }}</span></button>}
         @if (canViewPortalModule('accountStatement')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'receipt_exceptions'" (click)="openReconciliation(); taskCenterTab.set('receipt_exceptions')"><kendo-svg-icon [icon]="kendoStatementIcon" aria-hidden="true"></kendo-svg-icon><span>{{ language() === 'es' ? 'Estado de cuenta' : 'Account statement' }}</span></button>}
         @if (user()!.role === 'admin' && canViewPortalModule('settings')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'settings'" (click)="openReconciliation(); taskCenterTab.set('settings')"><kendo-svg-icon [icon]="kendoSettingsIcon" aria-hidden="true"></kendo-svg-icon><span>{{ language() === 'es' ? 'Configuración' : 'Settings' }}</span></button>}
-        @if (canViewPortalModule('preferences')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="preferencesView()" (click)="openPreferences()"><kendo-svg-icon [icon]="kendoPreferencesIcon" aria-hidden="true"></kendo-svg-icon><span>{{ t('preferences') }}</span></button>}
+        @if (canViewPortalModule('preferences')) {<button type="button" class="portal-nav-item portal-nav-bottom-item" [class.portal-nav-item-active]="preferencesView()" (click)="openPreferences()"><kendo-svg-icon [icon]="kendoPreferencesIcon" aria-hidden="true"></kendo-svg-icon><span>{{ t('preferences') }}</span></button>}
       </nav>
     </aside>
 
@@ -212,7 +212,7 @@
             </section>
             <section class="preferences-info-box">
               <h2>{{ t('contact') }}</h2>
-              <div class="preferences-info-body"><p>{{ t('supportDescription') }}</p><ul><li><strong>{{ t('supportEmail') }}:</strong><span class="preferences-value">modestofm22&#64;gmail.com</span></li><li><strong>{{ t('supportWhatsapp') }}:</strong><span class="preferences-value">+51 928654891</span></li></ul><p>{{ t('supportSubject') }}</p></div>
+              <div class="preferences-info-body"><p>{{ t('supportDescription') }}</p><ul><li><strong>{{ t('supportEmail') }}:</strong><span class="preferences-value">AR&#64;Pacifica-farms.com</span></li><li><strong>{{ t('supportWhatsapp') }}:</strong><span class="preferences-value">+51 928654891</span></li></ul><p>{{ t('supportSubject') }}</p></div>
             </section>
           </section>
         </main>
@@ -572,6 +572,7 @@
                                     optionLabel="label" optionValue="value" [allowEmpty]="false"
                                     styleClass="as-view-toggle"></p-selectButton>
 
+                    @if (statementShowScopeFilters()) {
                     <div class="as-filter-group">
                       <p-dropdown [options]="statementScopeOptions()" [(ngModel)]="statementScopeValue"
                                   [group]="true" optionLabel="label" optionValue="value"
@@ -584,6 +585,7 @@
                                      [maxSelectedLabels]="1" display="comma"
                                      styleClass="as-customer-filter" panelStyleClass="as-customer-panel" appendTo="body"></p-multiSelect>
                     </div>
+                    }
 
                     <button type="button" class="account-statement-download" (click)="downloadAccountStatement()" [disabled]="!accountStatementInvoices().length" [attr.aria-label]="language() === 'es' ? 'Exportar a Excel' : 'Export to Excel'" [attr.title]="language() === 'es' ? 'Exportar a Excel' : 'Export to Excel'">
                       <svg class="excel-file-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -595,6 +597,15 @@
                         <path d="M14.1 13.1v3.4h1.7" stroke="#187c4a" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
                       </svg>
                     </button>
+
+                    @if (user()?.role === 'admin') {
+                    <button type="button" class="account-statement-download as-bulk-btn" (click)="openStmtBulk()"
+                            [disabled]="!accountStatementGroups().length"
+                            [attr.aria-label]="language() === 'es' ? 'Envío masivo' : 'Bulk send'"
+                            [attr.title]="language() === 'es' ? 'Envío masivo de estados de cuenta' : 'Bulk send account statements'">
+                      <mat-icon>forward_to_inbox</mat-icon>
+                    </button>
+                    }
                   </div>
 
                   <div class="as-date-range">
@@ -669,10 +680,13 @@
                           </div>
                           <div class="stmt-heading-right">
                             <strong>{{ group.rows.length }} {{ language() === 'es' ? 'facturas abiertas' : 'open invoices' }}</strong>
-                            <button type="button" class="stmt-mail-button" (click)="openStatementEmail(group)"
-                                    [title]="language() === 'es' ? 'Enviar por correo' : 'Send by email'">
-                              <mat-icon>mail_outline</mat-icon>
-                            </button>
+                            @if (canViewPortalModule('accountStatement')) {
+                              <button type="button" class="stmt-mail-button" (click)="openStatementEmail(group)"
+                                      [title]="language() === 'es' ? 'Enviar estado de cuenta por correo' : 'Send account statement by email'"
+                                      [attr.aria-label]="language() === 'es' ? 'Enviar estado de cuenta por correo' : 'Send account statement by email'">
+                                <i class="pi pi-share-alt" aria-hidden="true"></i>
+                              </button>
+                            }
                           </div>
                         </div>
                         <div class="portal-table account-statement-aging-table as-table">
@@ -689,13 +703,17 @@
                               <th [attr.aria-sort]="accountStatementSortKey() === '31-60' ? (accountStatementSortDirection() === 'asc' ? 'ascending' : 'descending') : 'none'"><button type="button" class="account-statement-sort-button" (click)="sortAccountStatement('31-60')">{{ accountStatementBucketLabel('31-60') }} <span>{{ accountStatementSortIndicator('31-60') }}</span></button></th>
                               <th [attr.aria-sort]="accountStatementSortKey() === '61-90' ? (accountStatementSortDirection() === 'asc' ? 'ascending' : 'descending') : 'none'"><button type="button" class="account-statement-sort-button" (click)="sortAccountStatement('61-90')">{{ accountStatementBucketLabel('61-90') }} <span>{{ accountStatementSortIndicator('61-90') }}</span></button></th>
                               <th [attr.aria-sort]="accountStatementSortKey() === '90+' ? (accountStatementSortDirection() === 'asc' ? 'ascending' : 'descending') : 'none'"><button type="button" class="account-statement-sort-button" (click)="sortAccountStatement('90+')">{{ accountStatementBucketLabel('90+') }} <span>{{ accountStatementSortIndicator('90+') }}</span></button></th>
+                            <th class="as-total-col">Total</th><th class="as-view-col">{{ language() === 'es' ? 'Acción' : 'Action' }}</th>
                             </tr>
                           </ng-template>
                           <ng-template pTemplate="body" let-row>
-                            <tr><td>{{ formatDate(row.invoice.due) }}</td><td>{{ formatDate(row.invoice.issued) }}</td><td>{{ row.invoice.poNumber || '' }}</td><td>{{ row.invoice.folio }}</td><td [class.account-statement-days-overdue]="row.daysExpiration > 0">{{ row.daysExpiration > 0 ? row.daysExpiration : '' }}</td><td class="money-cell">{{ row.bucketAmounts['0'] ? formatMoney(row.bucketAmounts['0']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['1-30'] ? formatMoney(row.bucketAmounts['1-30']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['31-60'] ? formatMoney(row.bucketAmounts['31-60']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['61-90'] ? formatMoney(row.bucketAmounts['61-90']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['90+'] ? formatMoney(row.bucketAmounts['90+']) : '' }}</td></tr>
+                            <tr><td>{{ formatDate(row.invoice.due) }}</td><td>{{ formatDate(row.invoice.issued) }}</td><td>{{ row.invoice.poNumber || '' }}</td><td>{{ row.invoice.folio }}</td><td [class.account-statement-days-overdue]="row.daysExpiration > 0">{{ row.daysExpiration > 0 ? row.daysExpiration : '' }}</td><td class="money-cell">{{ row.bucketAmounts['0'] ? formatMoney(row.bucketAmounts['0']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['1-30'] ? formatMoney(row.bucketAmounts['1-30']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['31-60'] ? formatMoney(row.bucketAmounts['31-60']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['61-90'] ? formatMoney(row.bucketAmounts['61-90']) : '' }}</td><td class="money-cell">{{ row.bucketAmounts['90+'] ? formatMoney(row.bucketAmounts['90+']) : '' }}</td><td class="money-cell as-total-cell"></td><td class="as-view-cell"><button type="button" class="as-view-btn" (click)="openPdf('invoice', row.invoice)" [title]="t('viewInvoice')" [attr.aria-label]="t('viewInvoice')"><i class="pi pi-file-pdf" aria-hidden="true"></i></button>@if (row.invoice.receivingPdfPath || row.invoice.receivingSharePointUrl) {<button type="button" class="as-view-btn" (click)="openPdf('receiving', row.invoice)" [title]="t('viewReceiving')" [attr.aria-label]="t('viewReceiving')"><i class="pi pi-truck" aria-hidden="true"></i></button>}</td></tr>
                           </ng-template>
                           <ng-template pTemplate="footer">
-                            <tr><td colspan="5">{{ language() === 'es' ? 'Totales del cliente' : 'Customer totals' }}</td><td class="money-cell">{{ group.totals['0'] ? formatMoney(group.totals['0']) : '' }}</td><td class="money-cell">{{ group.totals['1-30'] ? formatMoney(group.totals['1-30']) : '' }}</td><td class="money-cell">{{ group.totals['31-60'] ? formatMoney(group.totals['31-60']) : '' }}</td><td class="money-cell">{{ group.totals['61-90'] ? formatMoney(group.totals['61-90']) : '' }}</td><td class="money-cell">{{ group.totals['90+'] ? formatMoney(group.totals['90+']) : '' }}</td></tr>
+                            <tr><td colspan="5">{{ language() === 'es' ? 'Totales del cliente' : 'Customer totals' }}</td><td class="money-cell">{{ group.totals['0'] ? formatMoney(group.totals['0']) : '' }}</td><td class="money-cell">{{ group.totals['1-30'] ? formatMoney(group.totals['1-30']) : '' }}</td><td class="money-cell">{{ group.totals['31-60'] ? formatMoney(group.totals['31-60']) : '' }}</td><td class="money-cell">{{ group.totals['61-90'] ? formatMoney(group.totals['61-90']) : '' }}</td><td class="money-cell">{{ group.totals['90+'] ? formatMoney(group.totals['90+']) : '' }}</td><td class="money-cell as-total-cell">{{ group.totals.balance ? formatMoney(group.totals.balance) : '' }}</td><td class="as-view-cell"></td></tr>
+                            @if (group.rows.length && isWalmexInvoice(group.rows[0].invoice)) {
+                              <tr><td colspan="5">Customer totals DLLS</td><td class="money-cell">{{ group.totals['0'] ? formatMoney(walmexPesosToDollars(group.totals['0'])) : '' }}</td><td class="money-cell">{{ group.totals['1-30'] ? formatMoney(walmexPesosToDollars(group.totals['1-30'])) : '' }}</td><td class="money-cell">{{ group.totals['31-60'] ? formatMoney(walmexPesosToDollars(group.totals['31-60'])) : '' }}</td><td class="money-cell">{{ group.totals['61-90'] ? formatMoney(walmexPesosToDollars(group.totals['61-90'])) : '' }}</td><td class="money-cell">{{ group.totals['90+'] ? formatMoney(walmexPesosToDollars(group.totals['90+'])) : '' }}</td><td class="money-cell as-total-cell">{{ group.totals.balance ? formatMoney(walmexPesosToDollars(group.totals.balance)) : '' }}</td><td class="as-view-cell"></td></tr>
+                            }
                           </ng-template>
                         </p-table>
                         </div>
@@ -720,32 +738,36 @@
 
                       <div class="stmt-mail-body">
                         <div class="stmt-mail-col stmt-mail-col-main">
-                        <div class="stmt-mail-row">
+                        <div class="stmt-mail-row" [class.stmt-mail-row-client]="user()!.role !== 'admin'">
                           <label class="stmt-mail-field">
                             <span>{{ language() === 'es' ? 'Para' : 'To' }}</span>
-                            <input type="text" [ngModel]="stmtEmailTo()" (ngModelChange)="stmtEmailTo.set($event)" [placeholder]="language() === 'es' ? 'cliente@dominio.com, otro@dominio.com' : 'customer@domain.com, other@domain.com'">
+                            <input type="text" [ngModel]="stmtEmailTo()" (ngModelChange)="stmtEmailTo.set($event)" [readonly]="user()!.role !== 'admin'" [placeholder]="language() === 'es' ? 'cliente@dominio.com, otro@dominio.com' : 'customer@domain.com, other@domain.com'">
                           </label>
+                          @if (user()!.role === 'admin') {
                           <label class="stmt-mail-field">
                             <span>CC <small>({{ language() === 'es' ? 'opcional' : 'optional' }})</small></span>
                             <input type="text" [ngModel]="stmtEmailCc()" (ngModelChange)="stmtEmailCc.set($event)" [placeholder]="language() === 'es' ? 'separa varios con coma' : 'separate several with commas'">
                           </label>
+                          }
                         </div>
 
                         <label class="stmt-mail-field">
                           <span>{{ language() === 'es' ? 'Asunto' : 'Subject' }}</span>
-                          <input type="text" [ngModel]="stmtEmailSubject()" (ngModelChange)="stmtEmailSubject.set($event)">
+                          <input type="text" [ngModel]="stmtEmailSubject()" (ngModelChange)="stmtEmailSubject.set($event)" [readonly]="user()!.role !== 'admin'">
                         </label>
 
                         <div class="stmt-mail-field">
                           <span>{{ language() === 'es' ? 'Mensaje' : 'Message' }}</span>
-                          @if (tinymceReady() && !tinymceError()) {
+                          @if (user()!.role !== 'admin') {
+                            <div class="email-readonly-message" [innerHTML]="stmtEmailBody()"></div>
+                          } @else if (tinymceReady() && !tinymceError()) {
                             <editor [init]="emailEditorInit" [ngModel]="stmtEmailBody()" (ngModelChange)="stmtEmailBody.set($event)"></editor>
                           } @else {
                             <textarea rows="7" [ngModel]="stmtEmailBody()" (ngModelChange)="stmtEmailBody.set($event)"></textarea>
                           }
                         </div>
 
-                        <div class="stmt-mail-field">
+                        @if (user()!.role === 'admin') {<div class="stmt-mail-field">
                           <span>{{ language() === 'es' ? 'Logo al pie' : 'Footer logo' }}</span>
                           @if (stmtEmailLogo()) {
                             <div class="email-logo-row">
@@ -762,14 +784,14 @@
                               <input type="file" accept="image/*" (change)="onEmailLogoSelected($event, 'statement')">
                             </label>
                           }
-                        </div>
+                        </div>}
 
                         </div>
 
                         <div class="stmt-mail-col stmt-mail-col-side">
                         <div class="stmt-mail-field">
                           <span>{{ language() === 'es' ? 'Adjuntar como' : 'Attach as' }}</span>
-                          <div class="stmt-format-picker">
+                          @if (user()!.role === 'admin') {<div class="stmt-format-picker">
                             <button type="button" [class.active]="stmtEmailFormat() === 'excel'" (click)="setStmtEmailFormat('excel')">
                               <mat-icon>grid_on</mat-icon>
                               <span>
@@ -784,10 +806,18 @@
                                 <small>{{ language() === 'es' ? 'Captura compacta del cuadro' : 'Compact snapshot of the card' }}</small>
                               </span>
                             </button>
-                          </div>
+                          </div>}
                         </div>
 
-                        @if (stmtEmailFormat() === 'image') {
+                        @if (user()!.role !== 'admin' || stmtEmailFormat() === 'excel') {
+                          <div class="stmt-mail-filecard">
+                            <mat-icon>grid_on</mat-icon>
+                            <div>
+                              <strong>Excel (.xlsx)</strong>
+                              <small>{{ stmtEmailGroup()?.rows?.length }} {{ language() === 'es' ? 'facturas abiertas' : 'open invoices' }}</small>
+                            </div>
+                          </div>
+                        } @else if (stmtEmailFormat() === 'image') {
                           <div class="stmt-mail-preview">
                             @if (stmtEmailPreview()) {
                               <img [src]="stmtEmailPreview()" [alt]="language() === 'es' ? 'Vista previa' : 'Preview'">
@@ -808,11 +838,11 @@
                         </div>
 
                         <div class="stmt-mail-checks">
-                          <label class="stmt-mail-check">
+                          @if (user()!.role === 'admin') {<label class="stmt-mail-check">
                             <input type="checkbox" [ngModel]="stmtEmailSaveTemplate()" (ngModelChange)="stmtEmailSaveTemplate.set($event)">
                             <span>{{ language() === 'es' ? 'Recordar destinatarios de este cliente y el mensaje para ' : 'Remember recipients for this customer and the message for ' }}<strong>{{ emailTemplateCompany() }}</strong></span>
-                          </label>
-                          @if (stmtEmailAgent()) {
+                          </label>}
+                          @if (user()!.role === 'admin' && stmtEmailAgent()) {
                             <label class="stmt-mail-check" [class.is-disabled]="!stmtEmailAgent()!.email"
                                    [title]="stmtEmailAgent()!.email || (language() === 'es' ? 'Este agente no tiene correo capturado' : 'This agent has no email on file')">
                               <input type="checkbox" [ngModel]="stmtEmailIncludeAgent()" (ngModelChange)="stmtEmailIncludeAgent.set($event)"
@@ -854,7 +884,7 @@
                       <option value="credit">{{ language() === 'es' ? 'Crédito' : 'Credit' }}</option>
                       <option value="invoice">{{ language() === 'es' ? 'Factura' : 'Invoice' }}</option>
                       <option value="po">PO</option>
-                      <option value="guide">{{ language() === 'es' ? 'Guía' : 'Guide' }}</option>
+                      <option value="guide">AWB</option>
                     </select>
                   </label>
 
@@ -920,7 +950,7 @@
                           <span class="cd-th-inner"><span class="cd-th-title">PO</span>@if (creditsSortKey() === 'po') { <mat-icon class="cd-sort-icon">{{ creditsSortDir() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon> }</span>
                         </th>
                         <th class="cd-sortable" [class.cd-sorted]="creditsSortKey() === 'guide'" (click)="sortCreditsBy('guide')">
-                          <span class="cd-th-inner"><span class="cd-th-title">{{ language() === 'es' ? 'Guía' : 'Guide' }}</span>@if (creditsSortKey() === 'guide') { <mat-icon class="cd-sort-icon">{{ creditsSortDir() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon> }</span>
+                          <span class="cd-th-inner"><span class="cd-th-title">AWB</span>@if (creditsSortKey() === 'guide') { <mat-icon class="cd-sort-icon">{{ creditsSortDir() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon> }</span>
                         </th>
                         <th class="cd-sortable" [class.cd-sorted]="creditsSortKey() === 'date'" (click)="sortCreditsBy('date')">
                           <span class="cd-th-inner"><span class="cd-th-title">{{ language() === 'es' ? 'Fecha' : 'Date' }}</span>@if (creditsSortKey() === 'date') { <mat-icon class="cd-sort-icon">{{ creditsSortDir() === 'asc' ? 'arrow_upward' : 'arrow_downward' }}</mat-icon> }</span>
@@ -947,7 +977,10 @@
                           <td class="cd-td-actions">
                             @if (row.credit.creditSharePointUrl || row.credit.creditPdfPath) {
                               <button type="button" class="cd-action cd-action-pdf" (click)="openCreditPdf(row.invoice, row.credit, $event)" [title]="language() === 'es' ? 'Ver PDF' : 'View PDF'">
-                                <mat-icon>picture_as_pdf</mat-icon>
+                                <mat-icon fontSet="material-icons-outlined">description</mat-icon>
+                              </button>
+                              <button type="button" class="cd-action cd-action-send" [class.is-sent]="creditWasSent(row.invoice, row.credit)" (click)="openCreditEmailDialog(row.invoice, row.credit, $event)" [title]="language() === 'es' ? 'Enviar por correo' : 'Send by email'">
+                                <i class="pi pi-share-alt" aria-hidden="true"></i>
                               </button>
                             }
                           </td>
@@ -1006,11 +1039,6 @@
                     <mat-icon>person</mat-icon>
                     <span><strong>{{ language() === 'es' ? 'Usuario' : 'User' }}</strong><small>{{ language() === 'es' ? 'Administrar usuarios' : 'Manage users' }}</small></span>
                   </button>}
-                  <input #statementFileInput type="file" accept=".xlsx,.xlsm,.xls" hidden (change)="syncStatement($event)">
-                  <button type="button" class="sync-action-card" (click)="statementFileInput.click()" [disabled]="isSyncingStatement()">
-                    <mat-icon>{{ isSyncingStatement() ? 'sync' : 'account_balance' }}</mat-icon>
-                    <span><strong>{{ isSyncingStatement() ? '...' : (language() === 'es' ? 'Estado de cuenta' : 'Account statement') }}</strong><small>{{ language() === 'es' ? 'Actualizar saldos desde Excel' : 'Update balances from Excel' }}</small></span>
-                  </button>
                   <button type="button" class="sync-action-card" (click)="syncInvoices()" [disabled]="isSyncingInvoices()">
                     <mat-icon>{{ isSyncingInvoices() ? 'sync' : 'description' }}</mat-icon>
                     <span><strong>{{ isSyncingInvoices() ? '...' : t('syncInvoices') }}</strong><small>{{ language() === 'es' ? 'Importar facturas desde SharePoint' : 'Import invoices from SharePoint' }}</small></span>
@@ -1163,7 +1191,7 @@
               <div class="users-table-toolbar"><div class="users-toolbar-left"><div class="users-count-select">15 <mat-icon>view_list</mat-icon></div><button type="button" class="users-new-button" (click)="openClientForm()"><mat-icon>add</mat-icon>{{ language() === 'es' ? 'Nuevo' : 'New' }}</button></div><label class="users-search"><mat-icon>search</mat-icon><input [ngModel]="search()" (ngModelChange)="search.set($event)" [placeholder]="language() === 'es' ? 'Buscar usuario...' : 'Search user...'"></label></div>
               <div class="users-table-scroll"><table class="users-admin-table"><thead><tr><th>#</th><th>{{ language() === 'es' ? 'Usuario' : 'User' }}</th><th>{{ language() === 'es' ? 'Correo' : 'Email' }}</th><th>{{ language() === 'es' ? 'Perfil' : 'Role' }}</th><th>{{ language() === 'es' ? 'Clientes visibles' : 'Visible clients' }}</th><th>{{ language() === 'es' ? 'Ventanas' : 'Modules' }}</th><th>{{ language() === 'es' ? 'Estado' : 'Status' }}</th><th>{{ language() === 'es' ? 'Acciones' : 'Actions' }}</th></tr></thead><tbody>
                 @for (client of filteredClientUsers(); track client.id; let index = $index) {
-                  <tr><td>{{ index + 1 }}</td><td><div class="users-name-cell"><span><strong>{{ client.name }}</strong><small>{{ client.username }}</small></span></div></td><td>{{ client.email }}</td><td><span class="users-role-badge" [class.admin]="client.role === 'admin'">{{ client.role === 'admin' ? (language() === 'es' ? 'Administrador' : 'Administrator') : (language() === 'es' ? 'Usuario' : 'User') }}</span></td><td>{{ client.assignedClients?.length || (client.role === 'admin' ? (language() === 'es' ? 'Todos' : 'All') : 0) }}</td><td>{{ clientPermissionSummary(client) }}</td><td><span class="users-status-badge" [class.inactive]="client.active === false">{{ client.active === false ? (language() === 'es' ? 'Inactivo' : 'Inactive') : (language() === 'es' ? 'Activo' : 'Active') }}</span></td><td><div class="users-row-actions"><button type="button" (click)="openClientForm(client)" [attr.aria-label]="language() === 'es' ? 'Editar' : 'Edit'"><mat-icon>edit</mat-icon></button>@if (client.id !== user()!.id) {<button type="button" class="danger" (click)="deleteClient(client)" [attr.aria-label]="language() === 'es' ? 'Eliminar usuario' : 'Delete user'"><mat-icon>delete_outline</mat-icon></button>}</div></td></tr>
+                  <tr><td>{{ index + 1 }}</td><td><div class="users-name-cell"><span><strong>{{ client.name }}</strong><small>{{ client.username }}</small></span></div></td><td>{{ client.email }}</td><td><span class="users-role-badge" [class.admin]="client.role === 'admin'">{{ client.role === 'admin' ? (language() === 'es' ? 'Administrador' : 'Administrator') : (language() === 'es' ? 'Usuario' : 'User') }}</span></td><td>{{ client.assignedClients?.length || (client.role === 'admin' ? (language() === 'es' ? 'Todos' : 'All') : 0) }}</td><td>{{ clientPermissionSummary(client) }}</td><td><button type="button" class="users-status-badge" [class.inactive]="client.active === false" [disabled]="client.id === user()!.id" (click)="toggleClient(client)" [title]="client.id === user()!.id ? (language() === 'es' ? 'No puedes desactivar tu propia cuenta' : 'You cannot deactivate your own account') : (client.active === false ? (language() === 'es' ? 'Activar acceso' : 'Enable access') : (language() === 'es' ? 'Desactivar acceso' : 'Disable access'))">{{ client.active === false ? (language() === 'es' ? 'Inactivo' : 'Inactive') : (language() === 'es' ? 'Activo' : 'Active') }}</button></td><td><div class="users-row-actions"><button type="button" (click)="openClientForm(client)" [attr.aria-label]="language() === 'es' ? 'Editar' : 'Edit'"><mat-icon>edit</mat-icon></button>@if (client.id !== user()!.id) {<button type="button" class="danger" (click)="deleteClient(client)" [attr.aria-label]="language() === 'es' ? 'Eliminar usuario' : 'Delete user'"><mat-icon>delete_outline</mat-icon></button>}</div></td></tr>
                 } @empty {<tr><td colspan="8" class="users-empty-row">{{ language() === 'es' ? 'No hay usuarios que coincidan.' : 'No matching users.' }}</td></tr>}
               </tbody></table></div>
               <footer class="users-table-footer"><span>{{ language() === 'es' ? 'Mostrando' : 'Showing' }} {{ filteredClientUsers().length }} {{ language() === 'es' ? 'de' : 'of' }} {{ clients().length }}</span><span class="users-page-current">1</span></footer>
@@ -1356,16 +1384,16 @@
                   </div>
 
                   <div class="filterIcon">
-                    <button type="button" class="filterBtn" [class.applied]="invoiceFilterChips().length" title="Filters" (click)="toggleInvoiceFilter()">
+                    <button type="button" class="filterBtn" [class.applied]="invoiceFiltersApplied()" title="Filters" (click)="toggleInvoiceFilter()">
                       <i class="pi pi-filter"></i>
-                      @if (invoiceFilterChips().length) { <span class="alert"></span> }
+                      @if (invoiceFiltersApplied()) { <span class="alert"></span> }
                     </button>
                   </div>
                 </div>
               </div>
 
               <div class="orderListTable">
-            <p-table [value]="filteredInvoices()" [columns]="visibleInvoiceColumns()" dataKey="id"
+            <p-table [value]="filteredInvoices()" [columns]="displayedInvoiceColumns()" dataKey="id"
                      [scrollable]="true" scrollHeight="flex"
                      [tableStyle]="{ 'table-layout': 'fixed', 'min-width': invoiceTableWidth() + 'px' }"
                      [paginator]="true" [rows]="15" [rowsPerPageOptions]="[15, 25, 50, 100]"
@@ -1395,6 +1423,11 @@
                   }
                   <th class="k-sticky-right invoice-actions-head">
                     <span>{{ t('action') }}</span>
+                    <button type="button" class="bulkHeadBtn" (click)="openBulkSend()"
+                            [title]="language() === 'es' ? 'Envío masivo' : 'Bulk send'"
+                            [attr.aria-label]="language() === 'es' ? 'Envío masivo' : 'Bulk send'">
+                      <svg class="bulkHeadIcon" viewBox="0 -960 960 960" aria-hidden="true" focusable="false"><path fill="currentColor" d="M264.62-289.23q-27.62 0-46.12-18.5-18.5-18.5-18.5-46.12v-390.77q0-27.61 18.5-46.11t46.12-18.5h550.76q27.62 0 46.12 18.5 18.5 18.5 18.5 46.11v390.77q0 27.62-18.5 46.12-18.5 18.5-46.12 18.5H264.62ZM540-498.77 240-722.23v368.38q0 10.77 6.92 17.7 6.93 6.92 17.7 6.92h550.76q10.77 0 17.7-6.92 6.92-6.93 6.92-17.7v-368.38L540-498.77Zm0-48.77 292.31-217.08q-2.31-2.3-5-3.46-2.69-1.15-7.31-1.15H260q-3.85 0-7.69 1.92-3.85 1.93-6.16 4.23L540-547.54ZM144.62-169.23q-27.62 0-46.12-18.5Q80-206.23 80-233.85v-380h40v380q0 10.77 6.92 17.7 6.93 6.92 17.7 6.92h590.76v40H144.62ZM840-722.92q0-11.08-2.69-22-2.69-10.93-5-19.7-2.31-2.3-5-3.46-2.69-1.15-7.31-1.15H260q-3.85 0-7.69 1.92-3.85 1.93-6.16 4.23-2.3 8.77-4.23 19.31-1.92 10.54-1.92 20.85v-46.31h600v46.31Z"/></svg>
+                    </button>
                   </th>
                 </tr>
               </ng-template>
@@ -1415,14 +1448,15 @@
                         @case ('due') { <span>{{ invoice.due }}</span> }
                         @case ('amount') { <span>{{ formatMoney(invoice.amount) }}</span> }
                         @case ('balance') {
-                          <div class="invoice-balance-cell">
-                            <span>{{ formatMoney(invoiceBalance(invoice)) }}</span>
-                            @for (credit of creditFlagsForInvoice(invoice); track credit.creditNumber + '-' + $index) {
-                              @if (credit.creditSharePointUrl || credit.creditPdfPath) {
-                                <button class="portal-link-button" (click)="openCreditPdf(invoice, credit, $event)" [title]="'Credit ' + credit.creditNumber + ' PDF'"><mat-icon fontSet="material-icons-outlined">flag</mat-icon></button>
-                              }
-                            }
-                          </div>
+                          <span>{{ formatMoney(invoiceBalance(invoice)) }}</span>
+                        }
+                        @case ('devolucion') {
+                          @if (invoiceReturns(invoice).length) {
+                            <span class="invoice-return-cell">
+                              <button type="button" class="invoice-return-flag" (click)="openCreditsPdf(invoice, $event)" [title]="language() === 'es' ? 'Ver nota de devolución' : 'View return note'" [attr.aria-label]="language() === 'es' ? 'Ver nota de devolución' : 'View return note'"><mat-icon fontSet="material-icons-outlined">flag</mat-icon></button>
+                              <span class="invoice-return-amount">-{{ formatMoney(invoiceReturnTotal(invoice)) }}</span>
+                            </span>
+                          }
                         }
                         @case ('status') {
                           <span class="portal-status" [class.portal-status-paid]="statusLabel(invoice) === t('paid')" [class.portal-status-pending]="statusLabel(invoice) === t('pending')" [class.portal-status-received]="statusLabel(invoice) === t('received')" [class.portal-status-overdue]="statusLabel(invoice) === t('overdue')">{{ statusLabel(invoice) }}</span>
@@ -1430,7 +1464,7 @@
                       }
                     </td>
                   }
-                  <td class="k-sticky-right portal-actions">@if (invoice.reconciliationStatus !== 'missing') {<button type="button" class="btn-icon" (click)="openPdf('invoice', invoice)" [title]="t('viewInvoice')" [attr.aria-label]="t('viewInvoice')"><i class="pi pi-file-pdf" aria-hidden="true"></i></button>@if ((invoice.receivingPdfPath || invoice.receivingSharePointUrl)) {<button type="button" class="btn-icon" (click)="openPdf('receiving', invoice)" [title]="t('viewReceiving')" [attr.aria-label]="t('viewReceiving')"><i class="pi pi-truck" aria-hidden="true"></i></button>} @if (user()!.role === 'admin') {@if (!(invoice.receivingPdfPath || invoice.receivingSharePointUrl)) {<label class="btn-icon btn-icon-upload" [title]="t('uploadReceiving')"><i class="pi pi-upload" aria-hidden="true"></i><input type="file" accept="application/pdf,.pdf,image/png,image/jpeg" (change)="uploadReceiving(invoice, $event)"></label>}<button type="button" class="portal-icon-action-btn portal-icon-action-print" (click)="openInvoicePrintDocuments(invoice)" [attr.aria-label]="language() === 'es' ? 'Abrir factura y recibimiento' : 'Open invoice and receiving'" [title]="language() === 'es' ? 'Abrir factura y recibimiento' : 'Open invoice and receiving'"><i class="pi pi-print" aria-hidden="true"></i></button><button type="button" class="portal-invoice-actions-menu-button portal-icon-action-btn portal-icon-action-more" (click)="openInvoiceEditor(invoice)" aria-label="Edit invoice" title="Edit invoice"><i class="pi pi-pencil" aria-hidden="true"></i></button><button type="button" class="portal-delete-button portal-icon-action-btn portal-icon-action-delete" (click)="confirmDeleteInvoice(invoice)" [attr.aria-label]="t('delete')" [title]="t('delete')"><i class="pi pi-ban" aria-hidden="true"></i></button><button type="button" class="portal-icon-action-btn portal-icon-action-send" [class.is-sent]="invoiceWasSent(invoice)" (click)="openEmailDialog(invoice)" [attr.aria-label]="language() === 'es' ? 'Enviar por correo' : 'Send by email'" [title]="invoiceWasSent(invoice) ? invoiceSentTooltip(invoice) : (language() === 'es' ? 'Enviar factura y recibimiento por correo' : 'Send invoice and receiving by email')"><i class="pi pi-share-alt" aria-hidden="true"></i></button>}}</td>
+                  <td class="k-sticky-right portal-actions">@if (invoice.reconciliationStatus !== 'missing') {<button type="button" class="btn-icon" (click)="openPdf('invoice', invoice)" [title]="t('viewInvoice')" [attr.aria-label]="t('viewInvoice')"><i class="pi pi-file-pdf" aria-hidden="true"></i></button>@if ((invoice.receivingPdfPath || invoice.receivingSharePointUrl)) {<button type="button" class="btn-icon" (click)="openPdf('receiving', invoice)" [title]="t('viewReceiving')" [attr.aria-label]="t('viewReceiving')"><i class="pi pi-truck" aria-hidden="true"></i></button>}<button type="button" class="portal-icon-action-btn portal-icon-action-print" (click)="openInvoicePrintDocuments(invoice)" [attr.aria-label]="language() === 'es' ? 'Abrir factura y recibimiento' : 'Open invoice and receiving'" [title]="language() === 'es' ? 'Abrir factura y recibimiento' : 'Open invoice and receiving'"><i class="pi pi-print" aria-hidden="true"></i></button> @if (user()!.role === 'admin') {@if (!(invoice.receivingPdfPath || invoice.receivingSharePointUrl)) {<label class="btn-icon btn-icon-upload" [title]="t('uploadReceiving')"><i class="pi pi-upload" aria-hidden="true"></i><input type="file" accept="application/pdf,.pdf,image/png,image/jpeg" (change)="uploadReceiving(invoice, $event)"></label>}<button type="button" class="portal-invoice-actions-menu-button portal-icon-action-btn portal-icon-action-more" (click)="openInvoiceEditor(invoice)" aria-label="Edit invoice" title="Edit invoice"><i class="pi pi-pencil" aria-hidden="true"></i></button><button type="button" class="portal-delete-button portal-icon-action-btn portal-icon-action-delete" (click)="confirmDeleteInvoice(invoice)" [attr.aria-label]="t('delete')" [title]="t('delete')"><i class="pi pi-ban" aria-hidden="true"></i></button>}<button type="button" class="portal-icon-action-btn portal-icon-action-send" [class.is-sent]="invoiceWasSent(invoice)" (click)="openEmailDialog(invoice)" [attr.aria-label]="language() === 'es' ? 'Enviar por correo' : 'Send by email'" [title]="invoiceWasSent(invoice) ? invoiceSentTooltip(invoice) : (language() === 'es' ? 'Enviar factura y recibimiento por correo' : 'Send invoice and receiving by email')"><i class="pi pi-share-alt" aria-hidden="true"></i></button>}</td>
                 </tr>
               </ng-template>
 
@@ -1516,6 +1550,180 @@
   </div>
 }
 
+@if (bulkOpen()) {
+  <div class="bulk-backdrop">
+    <div class="bulk-dialog">
+      <header class="bulk-head">
+        <button type="button" class="bulk-close" (click)="closeBulkSend()" [disabled]="bulkSending()"
+                [attr.aria-label]="language() === 'es' ? 'Cerrar' : 'Close'"><mat-icon>close</mat-icon></button>
+      </header>
+
+      <div class="bulk-toolbar">
+        <label class="bulk-field">
+          <span>{{ language() === 'es' ? 'Desde' : 'From' }}</span>
+          <input type="date" [ngModel]="bulkFrom()" (ngModelChange)="bulkFrom.set($event)" [disabled]="bulkSending()">
+        </label>
+        <label class="bulk-field">
+          <span>{{ language() === 'es' ? 'Hasta' : 'To' }}</span>
+          <input type="date" [ngModel]="bulkTo()" (ngModelChange)="bulkTo.set($event)" [disabled]="bulkSending()">
+        </label>
+        <label class="bulk-check">
+          <input type="checkbox" [ngModel]="bulkOnlyUnsent()" (ngModelChange)="bulkOnlyUnsent.set($event)" [disabled]="bulkSending()">
+          <span>{{ language() === 'es' ? 'Solo las que no se han enviado' : 'Only unsent' }}</span>
+        </label>
+      </div>
+
+      <div class="bulk-body">
+        @for (row of bulkReadyRows(); track row.aliasKey) {
+          <div class="bulk-row">
+            <label class="bulk-row-head">
+              <input type="checkbox" [checked]="isBulkRowSelected(row)" (change)="toggleBulkRow(row)" [disabled]="bulkSending()">
+              <span class="bulk-row-name">{{ row.name }}</span>
+              <span class="bulk-row-count">{{ row.invoices.length }}</span>
+            </label>
+            <div class="bulk-row-detail">
+            <p class="bulk-row-to" [title]="row.recipients">{{ row.recipients }}</p>
+            <div class="bulk-chips">
+              @for (item of row.invoices; track item.id) {
+                <button type="button" class="bulk-chip"
+                        [class.on]="isBulkInvoiceSelected(item.id)"
+                        [class.no-receiving]="!item.hasReceiving"
+                        [class.ok]="bulkResultOf(item.id) === 'ok'"
+                        [class.bad]="bulkResultOf(item.id) === 'error'"
+                        [disabled]="bulkSending()"
+                        (click)="toggleBulkInvoice(item.id)"
+                        [title]="item.hasReceiving ? (language() === 'es' ? 'Con recibimiento' : 'With receiving') : (language() === 'es' ? 'Sin recibimiento: se enviará sola' : 'Without receiving: sent alone')">
+                  {{ item.folio }}
+                </button>
+              }
+            </div>
+            </div>
+          </div>
+        } @empty {
+          <p class="bulk-empty">{{ language() === 'es' ? 'No hay facturas pendientes de enviar en esas fechas.' : 'No unsent invoices in that range.' }}</p>
+        }
+
+        @if (bulkBlockedRows().length) {
+          <div class="bulk-blocked">
+            <h4>{{ language() === 'es' ? 'Sin destinatario registrado' : 'No recipient on file' }}</h4>
+            <p>{{ language() === 'es' ? 'No se pueden enviar hasta capturar su correo.' : 'They cannot be sent until an address is saved.' }}</p>
+            @for (row of bulkBlockedRows(); track row.aliasKey) {
+              <div class="bulk-blocked-row">
+                <span>{{ row.name }}</span>
+                <span>{{ row.invoices.length }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <footer class="bulk-foot">
+        <div class="bulk-foot-info">
+          @if (bulkSending()) {
+            <strong>{{ language() === 'es' ? 'Enviando' : 'Sending' }} {{ bulkDone() }} / {{ bulkSummary().emails }}</strong>
+          } @else {
+            <strong>{{ bulkSummary().emails }} {{ language() === 'es' ? 'correo(s)' : 'email(s)' }}</strong>
+            <span>{{ bulkSummary().clients }} {{ language() === 'es' ? 'cliente(s)' : 'customer(s)' }}</span>
+          }
+          @if (bulkError()) { <span class="bulk-foot-error">{{ bulkError() }}</span> }
+        </div>
+        <div class="bulk-foot-actions">
+          <button type="button" class="bulk-cancel" (click)="closeBulkSend()" [disabled]="bulkSending()">{{ language() === 'es' ? 'Cerrar' : 'Close' }}</button>
+          <button type="button" class="bulk-send" (click)="sendBulkInvoices()" [disabled]="bulkSending() || !bulkSummary().emails">
+            <mat-icon>send</mat-icon>{{ language() === 'es' ? 'Enviar' : 'Send' }}
+          </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+}
+
+@if (stmtBulkOpen()) {
+  <div class="bulk-backdrop">
+    <div class="bulk-dialog stmt-bulk-dialog">
+      <header class="bulk-head">
+        <div>
+          <h3>{{ language() === 'es' ? 'Envío masivo' : 'Bulk send' }}</h3>
+          <span>{{ language() === 'es' ? 'Un estado de cuenta por cliente, en Excel' : 'One account statement per customer, in Excel' }}</span>
+        </div>
+        <button type="button" class="bulk-close" (click)="closeStmtBulk()" [disabled]="stmtBulkSending()"
+                [attr.aria-label]="language() === 'es' ? 'Cerrar' : 'Close'"><mat-icon>close</mat-icon></button>
+      </header>
+
+      <div class="bulk-body">
+        @for (row of stmtBulkReadyRows(); track row.aliasKey) {
+          <div class="stmt-bulk-row"
+               [class.ok]="stmtBulkResultOf(row.aliasKey) === 'ok'"
+               [class.bad]="stmtBulkResultOf(row.aliasKey) === 'error'">
+            <label class="stmt-bulk-pick">
+              <input type="checkbox" [checked]="isStmtBulkSelected(row.aliasKey)"
+                     (change)="toggleStmtBulk(row.aliasKey)" [disabled]="stmtBulkSending()">
+            </label>
+            <div class="stmt-bulk-main">
+              <div class="stmt-bulk-title">
+                <span class="stmt-bulk-name">{{ row.name }}</span>
+                <span class="stmt-bulk-issuer" [class.centro]="row.issuer === 'centro'">{{ issuerName(row.issuer) }}</span>
+                @if (row.lastSentAt) {
+                  <span class="stmt-bulk-last" [title]="row.lastSentAt">
+                    {{ language() === 'es' ? 'último envío' : 'last sent' }} {{ stmtBulkLastSentLabel(row) }}
+                  </span>
+                }
+              </div>
+              <p class="stmt-bulk-to" [title]="row.recipients">{{ row.recipients }}</p>
+            </div>
+            <div class="stmt-bulk-figures">
+              <strong>{{ formatMoney(row.balance) }}</strong>
+              <span>{{ row.invoices }} {{ language() === 'es' ? 'factura(s)' : 'invoice(s)' }}</span>
+            </div>
+          </div>
+        } @empty {
+          <p class="bulk-empty">
+            @if (stmtBulkBlockedRows().length) {
+              {{ language() === 'es'
+                ? 'Todavía no hay ningún cliente con destinatario de estado de cuenta. Mándale uno desde su botón de correo y aparecerá aquí.'
+                : 'No customer has a statement recipient yet. Send one from their email button and it will show up here.' }}
+            } @else {
+              {{ language() === 'es' ? 'No hay clientes con saldo en pantalla.' : 'No customers with a balance on screen.' }}
+            }
+          </p>
+        }
+
+        @if (stmtBulkBlockedRows().length) {
+          <div class="bulk-blocked">
+            <h4>{{ language() === 'es' ? 'Sin destinatario de estado de cuenta' : 'No statement recipient' }}</h4>
+            <p>{{ language() === 'es' ? 'Se registran al enviarles el estado de cuenta desde su botón de correo. No se heredan de facturas.' : 'They are registered by sending them a statement from their email button. They are not inherited from invoices.' }}</p>
+            @for (row of stmtBulkBlockedRows(); track row.aliasKey) {
+              <div class="bulk-blocked-row">
+                <span>{{ row.name }}</span>
+                <span>{{ formatMoney(row.balance) }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <footer class="bulk-foot">
+        <div class="bulk-foot-info">
+          @if (stmtBulkSending()) {
+            <strong>{{ language() === 'es' ? 'Enviando' : 'Sending' }} {{ stmtBulkDone() }} / {{ stmtBulkSummary().emails }}</strong>
+            <span>{{ stmtBulkCurrent() }}</span>
+          } @else {
+            <strong>{{ stmtBulkSummary().emails }} {{ language() === 'es' ? 'correo(s)' : 'email(s)' }}</strong>
+            <span>{{ formatMoney(stmtBulkSummary().balance) }}</span>
+          }
+          @if (stmtBulkError()) { <span class="bulk-foot-error">{{ stmtBulkError() }}</span> }
+        </div>
+        <div class="bulk-foot-actions">
+          <button type="button" class="bulk-cancel" (click)="closeStmtBulk()" [disabled]="stmtBulkSending()">{{ language() === 'es' ? 'Cerrar' : 'Close' }}</button>
+          <button type="button" class="bulk-send" (click)="sendBulkStatements()" [disabled]="stmtBulkSending() || !stmtBulkSummary().emails">
+            <mat-icon>send</mat-icon>{{ language() === 'es' ? 'Enviar' : 'Send' }}
+          </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+}
+
 @if (emailDialogOpen()) {
   <div class="fixed inset-0 z-50 grid place-items-center bg-[#0e2119]/60 p-4 backdrop-blur-sm" style="z-index: 1000;">
     <form (ngSubmit)="sendInvoiceEmail()" (click)="$event.stopPropagation()" class="email-send-card max-h-[94vh] w-full bg-white rounded-2xl shadow-2xl">
@@ -1524,12 +1732,17 @@
         <div class="email-head-main">
           <span class="email-head-icon"><mat-icon>outgoing_mail</mat-icon></span>
           <div>
-            <h2 class="email-head-title">{{ language() === 'es' ? 'Enviar factura por correo' : 'Send invoice by email' }}</h2>
+            <h2 class="email-head-title">{{ emailCreditContext() ? (language() === 'es' ? 'Enviar devolución por correo' : 'Send return by email') : (language() === 'es' ? 'Enviar factura por correo' : 'Send invoice by email') }}</h2>
             <p class="email-head-sub">
               <strong>{{ emailInvoice()?.client }}</strong>
               <span class="email-head-dot">·</span>
-              {{ language() === 'es' ? 'Factura' : 'Invoice' }} {{ emailInvoice()?.folio }}
-              @if (emailInvoice()?.poNumber) { <span class="email-head-dot">·</span> PO {{ emailInvoice()?.poNumber }} }
+              @if (emailCreditContext()) {
+                {{ language() === 'es' ? 'Devolución' : 'Return' }} {{ emailCreditContext()?.creditNumber }}
+                <span class="email-head-dot">·</span> {{ language() === 'es' ? 'Factura' : 'Invoice' }} {{ emailInvoice()?.folio }}
+              } @else {
+                {{ language() === 'es' ? 'Factura' : 'Invoice' }} {{ emailInvoice()?.folio }}
+                @if (emailInvoice()?.poNumber) { <span class="email-head-dot">·</span> PO {{ emailInvoice()?.poNumber }} }
+              }
             </p>
           </div>
         </div>
@@ -1552,22 +1765,25 @@
         }
 
         <section class="email-section">
-          <div class="email-grid email-grid-recipients">
+          <div class="email-grid email-grid-recipients" [class.email-grid-single]="user()!.role !== 'admin'">
             <div class="email-field">
               <label class="email-label" for="emailToField">{{ language() === 'es' ? 'Para' : 'To' }}<span class="email-required">*</span></label>
-              <input id="emailToField" type="text" class="email-control" [ngModel]="emailTo()" (ngModelChange)="emailTo.set($event)" name="emailTo" [placeholder]="language() === 'es' ? 'cliente@dominio.com; otro@dominio.com' : 'customer@domain.com; other@domain.com'">
+              <input id="emailToField" type="text" class="email-control" [ngModel]="emailTo()" (ngModelChange)="emailTo.set($event)" [readonly]="user()!.role !== 'admin'" name="emailTo" [placeholder]="language() === 'es' ? 'cliente@dominio.com; otro@dominio.com' : 'customer@domain.com; other@domain.com'">
             </div>
+            @if (user()!.role === 'admin') {
             <div class="email-field">
               <label class="email-label" for="emailCcField">CC</label>
               <input id="emailCcField" type="text" class="email-control" [ngModel]="emailCc()" (ngModelChange)="emailCc.set($event)" name="emailCc" [placeholder]="language() === 'es' ? 'Opcional' : 'Optional'">
             </div>
+            }
           </div>
 
-          <div class="email-grid email-grid-subject">
+          <div class="email-grid email-grid-subject" [class.email-grid-single]="user()!.role !== 'admin'">
             <div class="email-field">
               <label class="email-label" for="emailSubjectField">{{ language() === 'es' ? 'Asunto' : 'Subject' }}<span class="email-required">*</span></label>
-              <input id="emailSubjectField" type="text" class="email-control" [ngModel]="emailSubject()" (ngModelChange)="emailSubject.set($event)" name="emailSubject">
+              <input id="emailSubjectField" type="text" class="email-control" [ngModel]="emailSubject()" (ngModelChange)="emailSubject.set($event)" [readonly]="user()!.role !== 'admin'" name="emailSubject">
             </div>
+            @if (user()!.role === 'admin') {
             <div class="email-field">
               <span class="email-label">{{ language() === 'es' ? 'Logo del encabezado' : 'Header logo' }}</span>
               @if (emailLogo()) {
@@ -1586,6 +1802,7 @@
                 </label>
               }
             </div>
+            }
           </div>
         </section>
 
@@ -1601,7 +1818,9 @@
             }
           </div>
 
-          @if (tinymceReady()) {
+          @if (user()!.role !== 'admin') {
+            <div class="email-readonly-message" [innerHTML]="emailBody()"></div>
+          } @else if (tinymceReady()) {
             <editor [init]="emailEditorInit" [ngModel]="emailBodyInitial()" (ngModelChange)="emailBody.set($event)" name="emailBody"></editor>
           } @else if (tinymceError()) {
             <div class="email-editor-placeholder email-editor-failed">
@@ -1620,21 +1839,26 @@
         <div class="email-attachment">
           <span class="email-attachment-icon"><mat-icon>picture_as_pdf</mat-icon></span>
           <div class="email-attachment-text">
-            <strong>{{ emailInvoice()?.folio }}.pdf</strong>
-            <span>{{ hasReceiving(emailInvoice()!)
-              ? (language() === 'es' ? 'Factura y recibimiento unidos' : 'Invoice and receiving merged')
-              : (language() === 'es' ? 'Sin recibimiento: se enviará sola' : 'No receiving: sent alone') }}</span>
+            @if (emailCreditContext()) {
+              <strong>{{ language() === 'es' ? 'Devolución' : 'Return' }} {{ emailCreditContext()?.creditNumber }}.pdf</strong>
+              <span>{{ language() === 'es' ? 'Nota de devolución' : 'Return note' }}</span>
+            } @else {
+              <strong>{{ emailInvoice()?.folio }}.pdf</strong>
+              <span>{{ hasReceiving(emailInvoice()!)
+                ? (language() === 'es' ? 'Factura y recibimiento unidos' : 'Invoice and receiving merged')
+                : (language() === 'es' ? 'Sin recibimiento: se enviará sola' : 'No receiving: sent alone') }}</span>
+            }
           </div>
         </div>
       </div>
 
       <footer class="email-foot">
         <div class="email-foot-checks">
-          <label class="email-save-template">
+          @if (user()!.role === 'admin') {<label class="email-save-template">
             <input type="checkbox" [ngModel]="emailSaveTemplate()" (ngModelChange)="emailSaveTemplate.set($event)" name="emailSaveTemplate">
-            <span>{{ language() === 'es' ? 'Recordar destinatarios de este cliente y el mensaje para ' : 'Remember recipients for this customer and the message for ' }}<strong>{{ emailTemplateCompany() }}</strong></span>
-          </label>
-          @if (emailAgent()) {
+            <span>{{ emailCreditContext() ? (language() === 'es' ? 'Recordar el mensaje de devolución para ' : 'Remember the return message for ') : (language() === 'es' ? 'Recordar destinatarios de este cliente y el mensaje para ' : 'Remember recipients for this customer and the message for ') }}<strong>{{ emailTemplateCompany() }}</strong></span>
+          </label>}
+          @if (user()!.role === 'admin' && emailAgent()) {
             <label class="email-save-template" [class.is-disabled]="!emailAgent()!.email"
                    [title]="emailAgent()!.email || (language() === 'es' ? 'Este agente no tiene correo capturado' : 'This agent has no email on file')">
               <input type="checkbox" [ngModel]="emailIncludeAgent()" (ngModelChange)="emailIncludeAgent.set($event)"
@@ -1678,7 +1902,7 @@
             <input [(ngModel)]="editInvoiceForm.poNumber" name="editPoNumber" class="field">
           </label>
           <label class="invoice-edit-field">
-            <span>{{ language() === 'es' ? 'Guía' : 'Guide' }}</span>
+            <span>AWB</span>
             <input [(ngModel)]="editInvoiceForm.guideNumber" name="editGuideNumber" class="field">
           </label>
           <label class="invoice-edit-field">
@@ -1782,7 +2006,7 @@
          @if (clients().length) {<label class="block invoice-form-span-3"><span class="mb-2 block text-sm font-semibold">{{ t('clientAccount') }}</span><select class="field" (change)="selectInvoiceClient($any($event.target).value)"><option value="">—</option>@for (client of clients(); track client.id) {<option [value]="client.id" [disabled]="!client.active">{{ client.name }} · {{ client.email }}</option>}</select></label>}
          <label class="block"><span class="mb-2 block text-sm font-semibold">{{ t('invoiceNumber') }}</span><input [(ngModel)]="newInvoice.folio" name="folio" class="field"></label>
          <label class="block"><span class="mb-2 block text-sm font-semibold">{{ t('poNumber') }}</span><input [(ngModel)]="newInvoice.poNumber" name="poNumber" class="field"></label>
-         <label class="block"><span class="mb-2 block text-sm font-semibold">{{ language() === 'es' ? 'Guía' : 'Guide' }}</span><input [(ngModel)]="newInvoice.guideNumber" name="guideNumber" class="field"></label>
+         <label class="block"><span class="mb-2 block text-sm font-semibold">AWB</span><input [(ngModel)]="newInvoice.guideNumber" name="guideNumber" class="field"></label>
         <label class="block"><span class="mb-2 block text-sm font-semibold">{{ t('customerName') }}</span><input [(ngModel)]="newInvoice.client" name="client" class="field" required></label>
         <label class="block"><span class="mb-2 block text-sm font-semibold">{{ t('email') }} *</span><input [(ngModel)]="newInvoice.email" name="email" type="email" class="field" required></label>
          <label class="block invoice-form-span-3"><span class="mb-2 block text-sm font-semibold">{{ t('concept') }}</span><input [(ngModel)]="newInvoice.concept" name="concept" class="field" required></label>

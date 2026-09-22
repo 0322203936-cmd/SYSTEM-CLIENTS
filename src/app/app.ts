@@ -11,6 +11,13 @@ import { MatSelectModule } from '@angular/material/select';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { SVGIconModule } from '@progress/kendo-angular-icons';
 import { companyTemplateKey, clientTemplateKey, findClientTemplate } from './email-template-keys';
+import { firstValueFrom } from 'rxjs';
+import { buildBulkSendRows, bulkSendSummary, BulkSendInvoice, BulkSendRow } from './bulk-send';
+import { buildBulkStatementRows, bulkStatementSummary, bulkStatementQueue, BulkStatementGroup, BulkStatementRow } from './bulk-statement';
+import { shouldUseWalmexCache } from './walmex-cache-policy.mjs';
+import { visibleStatementCompanies } from './statement-company-policy.mjs';
+import { accountStatementInvoiceBalance } from './account-statement-balance.mjs';
+import { getPortalStartupView } from './portal-startup-view.mjs';
 import { cartIcon, clipboardTextIcon, documentManagerIcon, dollarIcon, fileReportIcon, gearIcon, globeOutlineIcon, layout2By2Icon, userOutlineIcon } from '@progress/kendo-svg-icons';
 import { FaIconComponent } from '@fortawesome/angular-fontawesome';
 import { EditorComponent } from '@tinymce/tinymce-angular';
@@ -31,7 +38,7 @@ type Role = 'admin' | 'client';
 type PortalPermission = 'dashboard' | 'invoices' | 'checks' | 'support' | 'credits' | 'reconciliation' | 'accountStatement' | 'settings' | 'users' | 'preferences';
 type Language = 'en' | 'es';
 type InvoiceSortKey = 'poNumber' | 'guideNumber' | 'folio' | 'client' | 'issued' | 'due' | 'amount' | 'status';
-type InvoiceView = 'all' | 'pending' | 'received' | 'paid' | 'overdue';
+type InvoiceView = 'all' | 'pending' | 'received' | 'paid' | 'overdue' | 'returns';
 type InvoiceSearchField = 'number' | 'client' | 'concept';
 type AccountStatementSortKey = 'expiration' | 'date' | 'poNumber' | 'invoice' | 'daysExpiration' | AccountStatementAgingBucket;
 type ReconciliationSort = 'date' | 'missing' | 'found';
@@ -199,6 +206,7 @@ interface Invoice {
   receivingSharePointUrl?: string;
   creditAmount?: number;
   balance?: number;
+  checkApplications?: { date: string; amount: number }[];
   credits?: CreditRecord[];
   reconciliationStatus?: string;
   walmexSource?: boolean;
@@ -214,7 +222,7 @@ interface Agent {
 }
 
 interface InvoiceGridColumn {
-  key: InvoiceSortKey | 'balance';
+  key: InvoiceSortKey | 'balance' | 'devolucion';
   label: string;
   visible: boolean;
   locked?: boolean;
@@ -264,6 +272,7 @@ interface ReconciliationResponse {
   statementUploadedAt?: string | null;
   rows: ReconciliationRow[];
   totals: { excel: number; found: number; missing: number };
+  pagination?: { page: number; pageSize: number; total: number };
 }
 
 interface CreditReconciliationRow {
@@ -286,6 +295,7 @@ interface CreditReconciliationResponse {
   source: string;
   rows: CreditReconciliationRow[];
   totals: { excel: number; system: number; both: number; missing: number; different: number };
+  pagination?: { page: number; pageSize: number; total: number };
 }
 
 type SupportTicketStatus = 'open' | 'in_progress' | 'resolved';
@@ -380,7 +390,7 @@ interface InvoiceSyncJob {
 }
 
 interface CheckAllocation {
-  invoiceId: number;
+  invoiceId: number | string;
   folio: string;
   amount: number;
 }
@@ -498,6 +508,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     { key: 'due', label: 'Due date', visible: true, width: 120 },
     { key: 'amount', label: 'Amount (USD)', visible: true, width: 130 },
     { key: 'balance', label: 'Balance', visible: true, width: 150 },
+    { key: 'devolucion', label: 'Credit', visible: true, width: 140 },
     { key: 'status', label: 'Status', visible: true, width: 130 },
   ]);
   /** Las tres primeras columnas van congeladas, igual que el grid de Orders. */
@@ -508,7 +519,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   invoiceSortDirection = signal<'asc' | 'desc'>('desc');
   showForm = signal(false);
   activeTab = signal<'dashboard' | 'invoices' | 'clients'>('dashboard');
-  reconciliationView = signal(new URLSearchParams(window.location.search).get('view') === 'reconciliation');
+  reconciliationView = signal(false);
   taskCenterTab = signal('reconciliation');
   checksSubTab = signal<'register' | 'report'>('register');
   checks = signal<CheckRecord[]>([]);
@@ -537,13 +548,13 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   showCheckEditor = signal(false);
   expandedChecks = signal<number[]>([]);
   editingCheck = signal<CheckRecord | null>(null);
-  editCheckForm = signal<{ date: string; series: string; allocations: { invoiceId: number; folio: string; poNumber: string; amount: number }[] }>({ date: '', series: '', allocations: [] });
+  editCheckForm = signal<{ date: string; series: string; allocations: { invoiceId: number | string; folio: string; poNumber: string; amount: number }[] }>({ date: '', series: '', allocations: [] });
   checkDate = signal(new Date().toISOString().slice(0, 10));
   checkSeries = signal('');
   checkClient = signal('');
   checkTotal = signal('');
-  selectedCheckInvoiceIds = signal<number[]>([]);
-  checkInvoiceAmounts = signal<Record<number, number>>({});
+  selectedCheckInvoiceIds = signal<(number | string)[]>([]);
+  checkInvoiceAmounts = signal<Record<string, number>>({});
   // Envío de factura + recibimiento por correo
   emailDialogOpen = signal(false);
   emailInvoice = signal<Invoice | null>(null);
@@ -573,9 +584,20 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   // Un solo selector combina empresa y agente: 'all' | 'pacifica' | 'centro'
   // o 'agent:<id>'. La empresa se deriva para el resto de la logica.
   statementScope = signal<string>('all');
+  statementVisibleCompanies = computed(() => {
+    const current = this.user();
+    const issuers = this.invoices()
+      .filter(invoice => this.invoiceVisibleToUser(invoice, current))
+      .map(invoice => this.invoiceIssuerKey(invoice));
+    return visibleStatementCompanies(current?.role, issuers) as ('pacifica' | 'centro')[];
+  });
   statementCompany = computed<'all' | 'pacifica' | 'centro'>(() => {
     const scope = this.statementScope();
-    return scope === 'pacifica' || scope === 'centro' ? scope : 'all';
+    const visible = this.statementVisibleCompanies();
+    if (scope === 'pacifica' || scope === 'centro') {
+      return visible.includes(scope) || this.user()?.role === 'admin' ? scope : (visible.length === 1 ? visible[0] : 'all');
+    }
+    return visible.length === 1 ? visible[0] : 'all';
   });
   statementAgent = computed<Agent | null>(() => {
     const scope = this.statementScope();
@@ -803,7 +825,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         || (view === 'pending' && etiqueta === this.t('pending'))
         || (view === 'received' && etiqueta === this.t('received'))
         || (view === 'paid' && etiqueta === this.t('paid'))
-        || (view === 'overdue' && etiqueta === this.t('overdue'));
+        || (view === 'overdue' && etiqueta === this.t('overdue'))
+        || (view === 'returns' && this.invoiceReturns(invoice).length > 0);
     const selectedCustomers = this.customerFilter();
       const customer = !selectedCustomers.length || selectedCustomers.some(selected => this.customerMatches(invoice.client, selected));
       const from = !this.dateFrom() || invoice.issued >= this.dateFrom();
@@ -851,6 +874,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         received: this.language() === 'es' ? 'Recibidas' : 'Received',
         paid: this.language() === 'es' ? 'Pagadas' : 'Paid',
         overdue: this.language() === 'es' ? 'Vencidas' : 'Overdue',
+        returns: this.language() === 'es' ? 'Con crédito' : 'With credit',
       };
       chips.push({ key: 'view', label: labels[this.invoiceView()] });
     }
@@ -863,6 +887,16 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     // Las fechas no llevan chip: ya se ven en sus propios campos, igual que en Orders.
     return chips;
   });
+
+  /**
+   * Si hay algo filtrando la tabla, venga de donde venga. Las fechas
+   * quedan fuera a proposito: se ven en sus propios campos y casi
+   * siempre traen un rango puesto, asi que marcarian el embudo siempre.
+   */
+  invoiceFiltersApplied = computed(() =>
+    this.invoiceFilterChips().length > 0
+    || this.invoiceSearch().trim().length > 0
+    || this.search().trim().length > 0);
 
   // ── Dashboard: resumen de transacciones ──
   dashboardYear = signal(new Date().getFullYear());
@@ -1205,18 +1239,33 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         const to = this.statementDateTo();
         if (from && issued && issued < from) return false;
         if (to && issued && issued > to) return false;
-        return this.invoiceBalance(invoice) > 0
+        return this.accountStatementBalance(invoice) > 0
           && this.accountStatementCustomerMatches(invoice, customers)
           && matchesSearch;
       })
       .sort((a, b) => String(b.issued || '').localeCompare(String(a.issued || '')) || String(a.folio).localeCompare(String(b.folio), undefined, { numeric: true }));
   });
+  /** Clientes distintos que este usuario puede ver, sin contar filtros. */
+  statementCustomerUniverse = computed(() => {
+    const current = this.user();
+    const keys = new Set<string>();
+    for (const invoice of this.invoices()) {
+      if (!this.invoiceVisibleToUser(invoice, current)) continue;
+      if (this.accountStatementBalance(invoice) <= 0) continue;
+      keys.add(this.accountStatementCustomerGroupKey(invoice));
+    }
+    return keys.size;
+  });
+
+  /** Con un solo cliente, elegir empresa o cliente no cambia nada. */
+  statementShowScopeFilters = computed(() => this.statementCustomerUniverse() > 1);
+
   accountStatementCustomers = computed(() => {
     const customers = new Map<string, string>();
     const company = this.statementCompany();
     const agent = this.statementAgent();
     for (const invoice of this.invoices()) {
-      if (this.invoiceBalance(invoice) <= 0) continue;
+      if (this.accountStatementBalance(invoice) <= 0) continue;
       if (company !== 'all' && this.invoiceIssuerKey(invoice) !== company) continue;
       if (agent && !this.agentCoversInvoice(agent, invoice)) continue;
       const key = this.accountStatementCustomerGroupKey(invoice);
@@ -1230,7 +1279,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       invoices: invoices.length,
       invoiced: invoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
       credits: invoices.reduce((sum, invoice) => sum + Number(invoice.creditAmount || 0), 0),
-      balance: invoices.reduce((sum, invoice) => sum + this.invoiceBalance(invoice), 0)
+      balance: invoices.reduce((sum, invoice) => sum + this.accountStatementBalance(invoice), 0)
     };
   });
   accountStatementGroups = computed<AccountStatementCustomerGroup[]>(() => {
@@ -1318,7 +1367,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     .filter(Boolean))).sort((a, b) => a.localeCompare(b)));
   checkSelectedBalance = computed(() => {
     const amounts = this.checkInvoiceAmounts();
-    return this.selectedCheckInvoiceIds().reduce((sum, id) => sum + (Number(amounts[id]) || 0), 0);
+    return this.selectedCheckInvoiceIds().reduce<number>((sum, id) => sum + (Number(amounts[String(id)]) || 0), 0);
   });
   checkUnallocated = computed(() => Math.max(0, Number(this.checkTotal() || 0) - this.checkSelectedBalance()));
   checkOverAllocated = computed(() => Math.max(0, Number((this.checkSelectedBalance() - Number(this.checkTotal() || 0)).toFixed(2))));
@@ -1465,6 +1514,13 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
 
   visibleInvoiceColumns = computed(() => this.invoiceColumns().filter(column => column.visible));
 
+  /** ¿El resultado filtrado trae al menos una devolución? */
+  private filteredHasReturns = computed(() => this.filteredInvoices().some(invoice => this.invoiceReturns(invoice).length > 0));
+
+  /** Columnas en pantalla: se quita Devolución cuando el resultado no tiene. */
+  displayedInvoiceColumns = computed(() =>
+    this.visibleInvoiceColumns().filter(column => column.key !== 'devolucion' || this.filteredHasReturns()));
+
   /** Una columna queda congelada si sigue entre las tres primeras. */
   isInvoiceColumnFrozen(column: InvoiceGridColumn) {
     return this.invoiceColumns().slice(0, this.invoiceFrozenCount).some(item => item.key === column.key);
@@ -1518,7 +1574,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     { label: this.t('pending'), value: 'pending' },
     { label: this.t('received'), value: 'received' },
     { label: this.t('paid'), value: 'paid' },
-    { label: this.t('overdue'), value: 'overdue' }
+    { label: this.t('overdue'), value: 'overdue' },
+    { label: this.language() === 'es' ? 'Con crédito' : 'With credit', value: 'returns' }
   ]);
 
   invoiceSearchFieldOptions = computed(() => [
@@ -1528,13 +1585,14 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   ]);
 
   invoiceTableWidth = computed(() =>
-    this.visibleInvoiceColumns().reduce((sum, column) => sum + column.width, 0) + this.invoiceActionsWidth);
+    this.displayedInvoiceColumns().reduce((sum, column) => sum + column.width, 0) + this.invoiceActionsWidth);
 
   /** Etiqueta traducida de cada columna. */
   invoiceColumnLabel(column: InvoiceGridColumn) {
     const labels: Record<string, string> = {
       poNumber: this.t('poNumber'),
-      guideNumber: this.language() === 'es' ? 'Guía' : 'Guide',
+      guideNumber: 'AWB',
+      devolucion: this.language() === 'es' ? 'Crédito' : 'Credit',
       folio: this.t('invoice'),
       client: this.t('customer'),
       issued: this.t('issued'),
@@ -1720,13 +1778,14 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
 
   statementScopeOptions = computed(() => {
     const isSpanish = this.language() === 'es';
+    const visible = this.statementVisibleCompanies();
     const groups: any[] = [
       {
         label: isSpanish ? 'Empresa' : 'Company',
         items: [
-          { label: isSpanish ? 'Todas' : 'All', value: 'all' },
-          { label: 'Pacifica Produce LLC', value: 'pacifica' },
-          { label: 'Centro Floricultor B.C', value: 'centro' }
+          ...(visible.length !== 1 ? [{ label: isSpanish ? 'Todas' : 'All', value: 'all' }] : []),
+          ...(visible.includes('pacifica') ? [{ label: 'Pacifica Produce LLC', value: 'pacifica' }] : []),
+          ...(visible.includes('centro') ? [{ label: 'Centro Floricultor B.C', value: 'centro' }] : [])
         ]
       }
     ];
@@ -1756,7 +1815,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   get statementScopeValue(): string {
-    return this.statementScope();
+    return this.statementCompany();
   }
   set statementScopeValue(value: string) {
     if (!value || value === this.statementScope()) return;
@@ -1859,6 +1918,12 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   constructor() {
+    const startupView = getPortalStartupView(window.location.href);
+    this.activeTab.set(startupView.activeTab);
+    this.reconciliationView.set(startupView.reconciliationView);
+    if (startupView.url !== window.location.href) {
+      window.history.replaceState({}, '', startupView.url);
+    }
     effect(() => {
       this.activeTab();
       this.dashboardYear();
@@ -1875,7 +1940,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       try {
         const profile = JSON.parse(savedUser) as UserProfile;
         this.user.set(profile);
-        this.activeTab.set('invoices');
+        this.loadEmailStatus();
         this.loadInvoices();
         this.loadNotifications();
         if (profile.role === 'admin') { this.loadClients(); this.loadAgents(); this.loadChecks(); this.loadEmailTemplates(); this.loadEmailLog(); }
@@ -1937,20 +2002,19 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     if (this.user()?.role === 'admin') this.loadReconciliation();
   }
 
-  loadCreditReconciliation() {
+  async loadCreditReconciliation() {
     this.creditReconciliationLoading.set(true);
-    this.http.get<CreditReconciliationResponse>('/api/reconciliation/credits', this.authOptions()).subscribe({
-      next: result => {
-        this.creditReconciliationRows.set(result.rows);
-        this.creditReconciliationTotals.set(result.totals);
-        this.creditReconciliationSource.set(result.source);
-        this.creditReconciliationLoading.set(false);
-      },
-      error: error => {
-        this.creditReconciliationLoading.set(false);
-        this.notify(this.errorMessage(error));
-      }
-    });
+    try {
+      let page = 1; let result: CreditReconciliationResponse | null = null; const rows: CreditReconciliationRow[] = [];
+      do {
+        result = await firstValueFrom(this.http.get<CreditReconciliationResponse>(`/api/reconciliation/credits?page=${page}&pageSize=100`, this.authOptions()));
+        rows.push(...(result.rows || []));
+        if (!result.pagination || rows.length >= result.pagination.total || !result.rows.length) break;
+        page += 1;
+      } while (page < 1000);
+      if (result) { this.creditReconciliationRows.set(rows); this.creditReconciliationTotals.set(result.totals); this.creditReconciliationSource.set(result.source); }
+    } catch (error) { this.notify(this.errorMessage(error)); }
+    finally { this.creditReconciliationLoading.set(false); }
   }
 
   uploadCreditReconciliationExcel(event: Event) {
@@ -2076,29 +2140,27 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   login() {
-    if (this.loginStep() === 'email') {
-      if (!this.loginUser.trim()) return;
-      this.loginStep.set('password');
-      setTimeout(() => {
-        (document.activeElement as HTMLElement | null)?.blur();
-        window.getSelection()?.removeAllRanges();
-      });
-      return;
-    }
-    if (!this.loginPassword.trim()) {
+    if (this.loading() || !this.loginUser.trim()) return;
+    if (this.loginStep() === 'password' && !this.loginPassword.trim()) {
       this.loginError.set(this.language() === 'es' ? 'La contraseña es obligatoria.' : 'Password is required.');
       return;
     }
     this.loading.set(true);
     this.loginError.set('');
-    this.http.post<AuthResponse>('/api/auth/login', {
-      username: this.loginUser.trim(), password: this.loginPassword
+    this.http.post<AuthResponse | { requiresPassword: true }>('/api/auth/login', {
+      username: this.loginUser.trim(), password: this.loginStep() === 'password' ? this.loginPassword : undefined
     }).subscribe({
       next: response => {
+        if ('requiresPassword' in response) {
+          this.loading.set(false);
+          this.loginStep.set('password');
+          return;
+        }
         sessionStorage.setItem('fc-token', response.token);
         sessionStorage.setItem('fc-user', JSON.stringify(response.user));
         this.loadInvoices(() => {
           this.user.set(response.user);
+          this.loadEmailStatus();
           this.loadNotifications();
           if (response.user.role === 'admin') { this.loadClients(); this.loadAgents(); this.loadChecks(); this.loadEmailTemplates(); this.loadEmailLog(); }
         });
@@ -2593,10 +2655,10 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
 
 
   /** Registro de envios: se escribe desde siempre, ahora tambien se lee. */
-  emailLogEntries = signal<{ invoiceId: number; sentAt: string; to: string[]; includedReceiving: boolean }[]>([]);
+  emailLogEntries = signal<{ invoiceId: number; creditNumber?: string; statementKey?: string; sentAt: string; to: string[]; includedReceiving: boolean }[]>([]);
 
   loadEmailLog() {
-    this.http.get<{ entries: { invoiceId: number; sentAt: string; to: string[]; includedReceiving: boolean }[] }>('/api/email-log', this.authOptions()).subscribe({
+    this.http.get<{ entries: { invoiceId: number; creditNumber?: string; statementKey?: string; sentAt: string; to: string[]; includedReceiving: boolean }[] }>('/api/email-log', this.authOptions()).subscribe({
       next: response => this.emailLogEntries.set(response.entries || []),
       error: () => { /* sin registro la tabla se ve como siempre */ }
     });
@@ -2607,6 +2669,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const map = new Map<string, { sentAt: string; to: string[]; includedReceiving: boolean; count: number }>();
     for (const entry of this.emailLogEntries()) {
       if (!entry?.invoiceId) continue;
+      if (entry.creditNumber) continue; // los envios de devolucion no marcan la factura
       const key = String(entry.invoiceId);
       const previous = map.get(key);
       const count = (previous?.count || 0) + 1;
@@ -2619,6 +2682,19 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     }
     return map;
   });
+
+  /** Devoluciones ya enviadas: invoiceId + creditNumber. */
+  private creditSendSet = computed(() => {
+    const set = new Set<string>();
+    for (const entry of this.emailLogEntries()) {
+      if (entry?.invoiceId && entry.creditNumber) set.add(String(entry.invoiceId) + '|' + entry.creditNumber);
+    }
+    return set;
+  });
+
+  creditWasSent(invoice: Invoice, credit: CreditRecord): boolean {
+    return this.creditSendSet().has(String(invoice.id) + '|' + String(credit.creditNumber || ''));
+  }
 
   invoiceWasSent(invoice: Invoice): boolean {
     return this.invoiceSendMap().has(String(invoice.id));
@@ -2645,13 +2721,72 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   loadEmailTemplates() {
-    this.http.get<{ templates: EmailTemplate[]; mailReady: boolean; mailFrom: string }>('/api/email-templates', this.authOptions()).subscribe({
+    this.http.get<{ templates: EmailTemplate[] }>('/api/email-templates', this.authOptions()).subscribe({
       next: response => {
         this.emailTemplates.set(response.templates || []);
+      },
+      error: () => { /* La plantilla se puede escribir a mano si no cargó. */ }
+    });
+  }
+
+  loadEmailStatus() {
+    this.http.get<{ mailReady: boolean; mailFrom: string; mailFromCentro: string }>('/api/email-status', this.authOptions()).subscribe({
+      next: response => {
         this.emailReady.set(response.mailReady !== false);
         this.emailFrom.set(response.mailFrom || '');
       },
-      error: () => { /* La plantilla se puede escribir a mano si no cargó. */ }
+      error: () => { /* No afecta la autorización ni el flujo de envío. */ }
+    });
+  }
+
+  /**
+   * El catalogo de plantillas viaja sin logotipo porque pesa mucho, asi que
+   * el envio masivo lo pide aparte. Se recuerda por llave: en una tanda son
+   * dos o tres plantillas, no una por cliente.
+   */
+  private templateLogoCache = new Map<string, string>();
+
+  private async templateLogo(templateKey: string): Promise<string> {
+    if (!templateKey) return '';
+    const cached = this.templateLogoCache.get(templateKey);
+    if (cached !== undefined) return cached;
+    try {
+      const response = await firstValueFrom(this.http.get<{ template: EmailTemplate }>(
+        `/api/email-templates/${encodeURIComponent(templateKey)}`, this.authOptions()));
+      const logo = response?.template?.logo || '';
+      this.templateLogoCache.set(templateKey, logo);
+      return logo;
+    } catch {
+      // sin logotipo el correo sale igual, solo sin la firma de imagen
+      return '';
+    }
+  }
+
+  /**
+   * Logotipo del correo de devolucion. La plantilla de devoluciones puede no
+   * tener uno guardado, asi que cae al de la empresa antes de quedarse sin
+   * firma. Solo escribe si el cuadro sigue abierto en la misma factura.
+   */
+  private async loadCreditEmailLogo(creditKey: string, companyKey: string, invoiceId: string | number) {
+    const logo = (await this.templateLogo(creditKey)) || (await this.templateLogo(companyKey));
+    if (!logo) return;
+    if (String(this.emailInvoice()?.id || '') !== String(invoiceId || '')) return;
+    this.emailLogo.set(logo);
+  }
+
+  private loadEmailTemplateLogo(templateKey: string | undefined, context: 'invoice' | 'statement', invoiceId?: string | number) {
+    if (!templateKey) return;
+    this.http.get<{ template: EmailTemplate }>(`/api/email-templates/${encodeURIComponent(templateKey)}`, this.authOptions()).subscribe({
+      next: response => {
+        const logo = response.template?.logo || '';
+        if (context === 'invoice') {
+          if (String(this.emailInvoice()?.id || '') !== String(invoiceId || '')) return;
+          this.emailLogo.set(logo);
+        } else if (this.stmtEmailOpen()) {
+          this.stmtEmailLogo.set(logo);
+        }
+      },
+      error: () => { /* El correo sigue funcionando sin logotipo. */ }
     });
   }
 
@@ -2680,12 +2815,328 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     });
   }
 
-  openEmailDialog(invoice: Invoice) {
-    if (invoice.readOnly) return;
-    if (!invoice.id || invoice.reconciliationStatus === 'missing') {
-      this.notify(this.language() === 'es' ? 'Los archivos todavía no están disponibles.' : 'The files are not available yet.');
-      return;
+  // ── Envio masivo de facturas ──
+  bulkOpen = signal(false);
+  bulkFrom = signal('');
+  bulkTo = signal('');
+  bulkOnlyUnsent = signal(true);
+  bulkUnselected = signal<string[]>([]);
+  bulkSending = signal(false);
+  bulkDone = signal(0);
+  bulkResults = signal<Record<string, 'ok' | 'error'>>({});
+  bulkError = signal('');
+
+  /** Destinatarios guardados de cada cliente, por su llave de agrupacion. */
+  private bulkRecipients = computed(() => {
+    const map: Record<string, string> = {};
+    for (const invoice of this.invoices()) {
+      const aliasKey = this.customerAliasKey(invoice.client);
+      if (map[aliasKey] !== undefined) continue;
+      map[aliasKey] = this.user()?.role === 'admin' ? this.invoiceEmailContext(invoice).to : (this.user()?.email || '');
     }
+    return map;
+  });
+
+  bulkRows = computed<BulkSendRow[]>(() => {
+    const current = this.user();
+    const candidates: BulkSendInvoice[] = [];
+    for (const invoice of this.invoices()) {
+      if (invoice.readOnly || !invoice.id) continue;
+      if (!this.invoiceVisibleToUser(invoice, current)) continue;
+      candidates.push({
+        id: String(invoice.id),
+        folio: invoice.folio || '',
+        client: this.customerDisplayName(invoice.client),
+        aliasKey: this.customerAliasKey(invoice.client),
+        issued: invoice.issued || '',
+        hasReceiving: this.hasReceiving(invoice),
+        alreadySent: this.invoiceWasSent(invoice),
+      });
+    }
+    return buildBulkSendRows(candidates, {
+      from: this.bulkFrom(),
+      to: this.bulkTo(),
+      onlyUnsent: this.bulkOnlyUnsent(),
+      recipients: this.bulkRecipients(),
+    });
+  });
+
+  /** Renglones que no se pueden enviar, para que se vea a quien falta correo. */
+  bulkBlockedRows = computed(() => this.bulkRows().filter(row => !row.selectable));
+  bulkReadyRows = computed(() => this.bulkRows().filter(row => row.selectable));
+
+  private bulkSelectedIds = computed(() => {
+    const out = new Set<string>();
+    const unselected = new Set(this.bulkUnselected());
+    for (const row of this.bulkReadyRows()) {
+      for (const invoice of row.invoices) {
+        const id = String(invoice.id);
+        if (!unselected.has(id)) out.add(id);
+      }
+    }
+    return out;
+  });
+
+  bulkSummary = computed(() => bulkSendSummary(this.bulkRows(), this.bulkSelectedIds()));
+
+  isBulkInvoiceSelected(id: string | number): boolean {
+    return !this.bulkUnselected().includes(String(id));
+  }
+
+  isBulkRowSelected(row: BulkSendRow): boolean {
+    return row.selectable && row.invoices.some(invoice => this.isBulkInvoiceSelected(invoice.id));
+  }
+
+  toggleBulkInvoice(id: string | number) {
+    const unselected = this.bulkUnselected();
+    const key = String(id);
+    this.bulkUnselected.set(unselected.includes(key) ? unselected.filter(item => item !== key) : [...unselected, key]);
+  }
+
+  toggleBulkRow(row: BulkSendRow) {
+    if (!row.selectable) return;
+    const ids = row.invoices.map(invoice => String(invoice.id));
+    const unselected = this.bulkUnselected();
+    this.bulkUnselected.set(this.isBulkRowSelected(row)
+      ? [...unselected, ...ids.filter(id => !unselected.includes(id))]
+      : unselected.filter(id => !ids.includes(id)));
+  }
+
+  openBulkSend() {
+    const today = App.todayIso();
+    this.bulkFrom.set(this.bulkFrom() || today);
+    this.bulkTo.set(this.bulkTo() || today);
+    this.bulkUnselected.set([]);
+    this.bulkResults.set({});
+    this.bulkDone.set(0);
+    this.bulkError.set('');
+    this.bulkOpen.set(true);
+  }
+
+  closeBulkSend() {
+    if (this.bulkSending()) return;
+    this.bulkOpen.set(false);
+  }
+
+  bulkResultOf(id: string | number): 'ok' | 'error' | null {
+    return this.bulkResults()[String(id)] || null;
+  }
+
+  /**
+   * Manda una por una, por la misma ruta que el cuadro manual. La pausa
+   * entre correos evita que Graph corte por ráfaga, y saveTemplate va en
+   * falso para que una tanda no reescriba la plantilla de la empresa.
+   */
+  async sendBulkInvoices() {
+    if (this.bulkSending()) return;
+    const selected = this.bulkSelectedIds();
+    const pending: Invoice[] = [];
+    for (const invoice of this.invoices()) {
+      if (invoice.id && selected.has(String(invoice.id))) pending.push(invoice);
+    }
+    if (!pending.length) return;
+
+    this.bulkSending.set(true);
+    this.bulkDone.set(0);
+    this.bulkResults.set({});
+    this.bulkError.set('');
+
+    for (const invoice of pending) {
+      const context = this.invoiceEmailContext(invoice);
+      try {
+        await firstValueFrom(this.http.post(`/api/invoices/${invoice.id}/send-email`, {
+          to: context.to,
+          cc: context.cc,
+          subject: context.subject,
+          bodyHtml: context.bodyHtml,
+          // el catalogo viene sin logotipo, hay que pedirlo aparte
+          logo: context.logo || await this.templateLogo(context.logoKey),
+          saveTemplate: false,
+          clientKey: context.clientKey,
+          companyKey: context.companyKey,
+        }, this.authOptions()));
+        this.bulkResults.set({ ...this.bulkResults(), [String(invoice.id)]: 'ok' });
+      } catch (error) {
+        this.bulkResults.set({ ...this.bulkResults(), [String(invoice.id)]: 'error' });
+        this.bulkError.set(this.errorMessage(error));
+      }
+      this.bulkDone.set(this.bulkDone() + 1);
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+
+    this.bulkSending.set(false);
+    if (this.user()?.role === 'admin') this.loadEmailLog();
+    const ok = Object.values(this.bulkResults()).filter(value => value === 'ok').length;
+    const failed = Object.values(this.bulkResults()).filter(value => value === 'error').length;
+    this.notify(this.language() === 'es'
+      ? `${ok} correo(s) enviado(s)${failed ? `, ${failed} con error` : ''}.`
+      : `${ok} email(s) sent${failed ? `, ${failed} failed` : ''}.`);
+  }
+
+  // ===== Envio masivo de estados de cuenta =====
+  // A diferencia del de facturas, aqui la unidad es el cliente: sale un correo
+  // por cliente con su estado completo adjunto, y solo lo ve un administrador.
+
+  stmtBulkOpen = signal(false);
+  stmtBulkUnselected = signal<string[]>([]);
+  stmtBulkSending = signal(false);
+  stmtBulkDone = signal(0);
+  stmtBulkCurrent = signal('');
+  stmtBulkResults = signal<Record<string, 'ok' | 'error'>>({});
+  stmtBulkError = signal('');
+
+  /** Ultimo estado de cuenta enviado a cada cliente, por su llave de grupo. */
+  private statementSendMap = computed(() => {
+    const map: Record<string, string> = {};
+    for (const entry of this.emailLogEntries()) {
+      const key = String(entry?.statementKey || '');
+      if (!key) continue;
+      // se conserva el mas reciente, sin importar el orden en que lleguen
+      if (String(entry.sentAt) > (map[key] || '')) map[key] = String(entry.sentAt);
+    }
+    return map;
+  });
+
+  stmtBulkRows = computed<BulkStatementRow[]>(() => {
+    const recipients: Record<string, string> = {};
+    const groups: BulkStatementGroup[] = [];
+    // el universo es lo que ya esta en pantalla, con los filtros puestos
+    for (const group of this.accountStatementGroups()) {
+      const context = this.statementEmailContext(group);
+      recipients[context.aliasKey] = context.to;
+      groups.push({
+        aliasKey: context.aliasKey,
+        name: group.customerName,
+        invoices: group.rows.length,
+        balance: group.totals.balance,
+        issuer: context.issuer,
+      });
+    }
+    return buildBulkStatementRows(groups, { recipients, lastSent: this.statementSendMap() });
+  });
+
+  /** Renglones que no se pueden enviar, para que se vea a quien falta correo. */
+  stmtBulkBlockedRows = computed(() => this.stmtBulkRows().filter(row => !row.selectable));
+  stmtBulkReadyRows = computed(() => this.stmtBulkRows().filter(row => row.selectable));
+
+  stmtBulkSummary = computed(() => bulkStatementSummary(this.stmtBulkRows(), new Set(this.stmtBulkUnselected())));
+
+  isStmtBulkSelected(aliasKey: string): boolean {
+    return !this.stmtBulkUnselected().includes(aliasKey);
+  }
+
+  toggleStmtBulk(aliasKey: string) {
+    const unselected = this.stmtBulkUnselected();
+    this.stmtBulkUnselected.set(unselected.includes(aliasKey)
+      ? unselected.filter(item => item !== aliasKey)
+      : [...unselected, aliasKey]);
+  }
+
+  openStmtBulk() {
+    this.stmtBulkUnselected.set([]);
+    this.stmtBulkResults.set({});
+    this.stmtBulkDone.set(0);
+    this.stmtBulkCurrent.set('');
+    this.stmtBulkError.set('');
+    this.stmtBulkOpen.set(true);
+  }
+
+  closeStmtBulk() {
+    if (this.stmtBulkSending()) return;
+    this.stmtBulkOpen.set(false);
+  }
+
+  stmtBulkResultOf(aliasKey: string): 'ok' | 'error' | null {
+    return this.stmtBulkResults()[aliasKey] || null;
+  }
+
+  /** "12 sep" del ultimo envio, o vacio si nunca se le ha mandado. */
+  stmtBulkLastSentLabel(row: BulkStatementRow): string {
+    if (!row.lastSentAt) return '';
+    const date = new Date(row.lastSentAt);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(this.language() === 'es' ? 'es-MX' : 'en-US',
+      { day: '2-digit', month: 'short' });
+  }
+
+  /**
+   * Manda uno por uno, por la misma ruta que el cuadro manual, para que el
+   * remitente por empresa y el mensaje guardado se comporten igual. La pausa
+   * entre correos evita que Graph corte por ráfaga, y saveTemplate va en falso
+   * para que una tanda no reescriba la plantilla de la empresa.
+   */
+  async sendBulkStatements() {
+    if (this.stmtBulkSending()) return;
+    const queue = bulkStatementQueue(this.stmtBulkRows(), new Set(this.stmtBulkUnselected()));
+    if (!queue.length) return;
+
+    const groups = new Map<string, any>();
+    for (const group of this.accountStatementGroups()) {
+      groups.set(this.customerAliasKey(group.customerName), group);
+    }
+
+    this.stmtBulkSending.set(true);
+    this.stmtBulkDone.set(0);
+    this.stmtBulkResults.set({});
+    this.stmtBulkError.set('');
+
+    for (const row of queue) {
+      this.stmtBulkCurrent.set(row.name);
+      try {
+        const group = groups.get(row.aliasKey);
+        if (!group) throw new Error(this.language() === 'es'
+          ? 'El cliente ya no está en pantalla.' : 'The customer is no longer on screen.');
+        const context = this.statementEmailContext(group);
+        // el masivo manda Excel: la imagen se dibuja desde el cuadro abierto
+        const attachmentBase64 = await this.buildStatementExcelBase64(group);
+        const slug = String(group.customerName || 'cliente').toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+        // el agente va en copia igual que en el envio manual, sin repetirse
+        const cc = [...new Set([...String(context.cc).split(/[;,]/), context.agent?.email || '']
+          .map(item => item.trim()).filter(Boolean))].join(', ');
+        // el renglon se armo con lo guardado, el envio tiene que usar lo mismo
+        if (!context.to.trim()) throw new Error(this.language() === 'es'
+          ? 'El cliente no tiene destinatario guardado.' : 'The customer has no saved recipient.');
+        await firstValueFrom(this.http.post('/api/account-statement/send-email', {
+          to: context.to,
+          cc,
+          subject: context.subject,
+          bodyHtml: context.bodyHtml,
+          // el catalogo viene sin logotipo, hay que pedirlo aparte
+          logo: context.logo || await this.templateLogo(context.logoKey),
+          attachmentBase64,
+          attachmentName: 'estado-de-cuenta-' + slug + '.xlsx',
+          placeholders: this.statementPlaceholderValues(group),
+          issuer: context.issuer,
+          saveTemplate: false,
+          clientKey: context.clientKey,
+          companyKey: context.companyKey,
+          client: group.customerName,
+        }, this.authOptions()));
+        this.stmtBulkResults.set({ ...this.stmtBulkResults(), [row.aliasKey]: 'ok' });
+      } catch (error) {
+        this.stmtBulkResults.set({ ...this.stmtBulkResults(), [row.aliasKey]: 'error' });
+        this.stmtBulkError.set(this.errorMessage(error));
+      }
+      this.stmtBulkDone.set(this.stmtBulkDone() + 1);
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+
+    this.stmtBulkSending.set(false);
+    this.stmtBulkCurrent.set('');
+    if (this.user()?.role === 'admin') this.loadEmailLog();
+    const ok = Object.values(this.stmtBulkResults()).filter(value => value === 'ok').length;
+    const failed = Object.values(this.stmtBulkResults()).filter(value => value === 'error').length;
+    this.notify(this.language() === 'es'
+      ? `${ok} estado(s) de cuenta enviado(s)${failed ? `, ${failed} con error` : ''}.`
+      : `${ok} statement(s) sent${failed ? `, ${failed} failed` : ''}.`);
+  }
+
+  /**
+   * Con que se manda el correo de una factura: destinatarios del cliente y
+   * mensaje de la empresa. Lo usan el cuadro manual y el envio masivo, para
+   * que uno no se comporte distinto del otro.
+   */
+  private invoiceEmailContext(invoice: Invoice) {
     const aliasKey = this.customerAliasKey(invoice.client);
     const templates = this.emailTemplates();
     const issuer = this.invoiceIssuerKey(invoice);
@@ -2696,27 +3147,51 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     // destinatarios (y el texto viejo, hasta que la empresa tenga el suyo)
     const message = companyTemplate || clientTemplate || generalTemplate;
     const template = clientTemplate || generalTemplate;
-    this.emailTemplateCompany.set(this.issuerName(issuer));
-    this.emailTemplateOrigin.set(companyTemplate ? 'company' : clientTemplate ? 'client' : generalTemplate ? 'general' : 'none');
+    const logoTemplate = companyTemplate || template;
+    const spanish = this.language() === 'es';
+    return {
+      aliasKey,
+      to: template?.to || invoice.email || '',
+      cc: template?.cc || '',
+      subject: message?.subject || (spanish ? 'Factura {{factura}} — {{cliente}}' : 'Invoice {{factura}} — {{cliente}}'),
+      bodyHtml: message?.bodyHtml || (spanish
+        ? '<p>Estimado cliente,</p><p>Adjuntamos la factura <strong>{{factura}}</strong> por {{monto}}, con vencimiento el {{vencimiento}}, junto con su recibimiento.</p><p>Quedamos atentos a cualquier consulta.</p><p>Saludos cordiales,<br>Pacifica Farms</p>'
+        : '<p>Dear customer,</p><p>Please find attached invoice <strong>{{factura}}</strong> for {{monto}}, due on {{vencimiento}}, along with its receiving document.</p><p>We remain at your service.</p><p>Best regards,<br>Pacifica Farms</p>'),
+      logo: logoTemplate?.logo || '',
+      logoKey: logoTemplate?.clientKey,
+      companyName: this.issuerName(issuer),
+      companyKey: companyTemplateKey('invoice', issuer),
+      clientKey: clientTemplateKey('invoice', aliasKey),
+      origin: (companyTemplate ? 'company' : clientTemplate ? 'client' : generalTemplate ? 'general' : 'none') as 'company' | 'client' | 'general' | 'none',
+    };
+  }
+
+  openEmailDialog(invoice: Invoice) {
+    if (invoice.readOnly) return;
+    if (!invoice.id || invoice.reconciliationStatus === 'missing') {
+      this.notify(this.language() === 'es' ? 'Los archivos todavía no están disponibles.' : 'The files are not available yet.');
+      return;
+    }
+    const context = this.invoiceEmailContext(invoice);
+    this.emailTemplateCompany.set(context.companyName);
+    this.emailTemplateOrigin.set(context.origin);
 
     this.emailInvoice.set(invoice);
-    this.emailTo.set(template?.to || invoice.email || '');
-    this.emailCc.set(template?.cc || '');
-    this.emailSubject.set(message?.subject || (this.language() === 'es'
-      ? 'Factura {{factura}} — {{cliente}}'
-      : 'Invoice {{factura}} — {{cliente}}'));
-    const body = message?.bodyHtml || (this.language() === 'es'
-      ? '<p>Estimado cliente,</p><p>Adjuntamos la factura <strong>{{factura}}</strong> por {{monto}}, con vencimiento el {{vencimiento}}, junto con su recibimiento.</p><p>Quedamos atentos a cualquier consulta.</p><p>Saludos cordiales,<br>Pacifica Farms</p>'
-      : '<p>Dear customer,</p><p>Please find attached invoice <strong>{{factura}}</strong> for {{monto}}, due on {{vencimiento}}, along with its receiving document.</p><p>We remain at your service.</p><p>Best regards,<br>Pacifica Farms</p>');
+    this.emailTo.set(this.user()?.role === 'admin' ? context.to : (this.user()?.email || ''));
+    this.emailCc.set(this.user()?.role === 'admin' ? context.cc : '');
+    this.emailSubject.set(context.subject);
+    const body = context.bodyHtml;
     this.emailBody.set(body);
     this.emailBodyInitial.set(body);
-    this.emailLogo.set(companyTemplate ? (companyTemplate.logo || '') : (template?.logo || ''));
+    this.emailLogo.set(context.logo);
     const agent = this.agentForCustomerName(this.customerDisplayName(invoice.client));
     this.emailAgent.set(agent);
     this.emailIncludeAgent.set(!!agent?.email);
     this.emailFieldContext.set('invoice');
-    this.emailSaveTemplate.set(true);
+    this.emailCreditContext.set(null);
+    this.emailSaveTemplate.set(this.user()?.role === 'admin');
     this.emailDialogOpen.set(true);
+    this.loadEmailTemplateLogo(context.logoKey, 'invoice', invoice.id);
     this.tinymceError.set(false);
     // TinyMCE puede conservar la instancia entre aperturas; asegúrate de que
     // reciba el mensaje actual aunque el editor ya estuviera inicializado.
@@ -2737,6 +3212,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     if (this.emailSending()) return;
     this.emailDialogOpen.set(false);
     this.emailInvoice.set(null);
+    this.emailCreditContext.set(null);
   }
 
   // Editor TinyMCE autohospedado: los archivos se sirven desde /tinymce. Se
@@ -2798,10 +3274,15 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   readonly statementPlaceholderKeys = ['cliente', 'saldo', 'facturas', 'fecha', 'empresa', 'agente'];
 
   /** Que cuadro de correo esta abierto, para ofrecer sus campos. */
-  emailFieldContext = signal<'invoice' | 'statement'>('invoice');
+  emailFieldContext = signal<'invoice' | 'statement' | 'credit'>('invoice');
+  /** Nota de devolución en curso; cuando existe, el cuadro va en modo credit. */
+  emailCreditContext = signal<CreditRecord | null>(null);
+  readonly creditPlaceholderKeys = ['cliente', 'credito', 'monto', 'factura', 'fecha'];
 
   activePlaceholderKeys(): string[] {
-    return this.emailFieldContext() === 'statement' ? this.statementPlaceholderKeys : this.emailPlaceholderKeys;
+    if (this.emailFieldContext() === 'statement') return this.statementPlaceholderKeys;
+    if (this.emailFieldContext() === 'credit') return this.creditPlaceholderKeys;
+    return this.emailPlaceholderKeys;
   }
 
   /** Valores con los que el servidor rellena {{campo}} en el estado de cuenta. */
@@ -2821,6 +3302,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const labels: Record<string, { es: string; en: string }> = {
       factura: { es: 'Número de factura', en: 'Invoice number' },
       cliente: { es: 'Nombre del cliente', en: 'Customer name' },
+      credito: { es: 'Número de devolución', en: 'Return number' },
       facturas: { es: 'Facturas abiertas', en: 'Open invoices' },
       fecha: { es: 'Fecha de hoy', en: 'Today' },
       empresa: { es: 'Empresa emisora', en: 'Issuing company' },
@@ -2876,7 +3358,69 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     (target === 'statement' ? this.stmtEmailLogo : this.emailLogo).set('');
   }
 
+  /** Llave del mensaje de devolución, compartido por empresa. */
+  private creditCompanyKey(issuer: 'pacifica' | 'centro'): string {
+    return 'cr:co:' + issuer;
+  }
+
+  /** Valores para {{campo}} del correo de devolución. */
+  private creditPlaceholderValues(invoice: Invoice, credit: CreditRecord): Record<string, string> {
+    return {
+      cliente: this.customerDisplayName(invoice.client),
+      credito: String(credit.creditNumber || ''),
+      monto: this.formatMoney(Number(credit.amount || 0)),
+      factura: invoice.folio || '',
+      fecha: this.formatDate(new Date().toISOString().slice(0, 10)),
+    };
+  }
+
+  /** Abre el cuadro para enviar la nota de devolución por correo. */
+  openCreditEmailDialog(invoice: Invoice, credit: CreditRecord, event: Event) {
+    event.stopPropagation();
+    if (!invoice.id) return;
+    // destinatarios y logo salen de lo ya configurado en facturas
+    const context = this.invoiceEmailContext(invoice);
+    const issuer = this.invoiceIssuerKey(invoice);
+    const creditTemplate = this.emailTemplates().find(item => item.clientKey === this.creditCompanyKey(issuer)) || null;
+    const spanish = this.language() === 'es';
+
+    this.emailInvoice.set(invoice);
+    this.emailCreditContext.set(credit);
+    this.emailTemplateCompany.set(context.companyName);
+    this.emailTemplateOrigin.set(creditTemplate ? 'company' : 'none');
+    this.emailTo.set(this.user()?.role === 'admin' ? context.to : (this.user()?.email || ''));
+    this.emailCc.set(this.user()?.role === 'admin' ? context.cc : '');
+    this.emailSubject.set(creditTemplate?.subject || (spanish
+      ? 'Nota de devolución {{credito}} — {{cliente}}'
+      : 'Return note {{credito}} — {{cliente}}'));
+    const body = creditTemplate?.bodyHtml || (spanish
+      ? '<p>Estimado cliente,</p><p>Adjuntamos la nota de devolución <strong>{{credito}}</strong> por {{monto}}, correspondiente a la factura {{factura}}.</p><p>Quedamos atentos a cualquier consulta.</p><p>Saludos cordiales,<br>{{cliente}}</p>'
+      : '<p>Dear customer,</p><p>Please find attached return note <strong>{{credito}}</strong> for {{monto}}, related to invoice {{factura}}.</p><p>We remain at your service.</p><p>Best regards</p>');
+    this.emailBody.set(body);
+    this.emailBodyInitial.set(body);
+    // el logo que ya está configurado para la empresa
+    this.emailLogo.set(creditTemplate?.logo || context.logo);
+    const agent = this.agentForCustomerName(this.customerDisplayName(invoice.client));
+    this.emailAgent.set(agent);
+    this.emailIncludeAgent.set(!!agent?.email);
+    this.emailFieldContext.set('credit');
+    this.emailSaveTemplate.set(this.user()?.role === 'admin');
+    this.emailDialogOpen.set(true);
+    this.tinymceError.set(false);
+    // la plantilla de devoluciones puede no traer logotipo; entonces se usa el
+    // de la empresa, que es el que el cliente ya reconoce
+    this.loadCreditEmailLogo(creditTemplate?.clientKey || '', context.logoKey, invoice.id);
+    const sync = (attempt = 0) => {
+      if (this.tinymceEditor?.setContent) { this.tinymceEditor.setContent(body); return; }
+      if (attempt < 40) setTimeout(() => sync(attempt + 1), 50);
+    };
+    this.loadTinymceScript().then(() => sync()).catch(() => this.tinymceError.set(true));
+  }
+
   sendInvoiceEmail() {
+    const credit = this.emailCreditContext();
+    if (credit) { this.sendCreditEmail(this.emailInvoice(), credit); return; }
+
     const invoice = this.emailInvoice();
     if (!invoice || this.emailSending()) return;
     if (!this.emailTo().trim()) {
@@ -2902,8 +3446,44 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         this.emailSending.set(false);
         this.emailDialogOpen.set(false);
         this.emailInvoice.set(null);
-        if (this.emailSaveTemplate()) this.loadEmailTemplates();
-        this.loadEmailLog();
+        if (this.user()?.role === 'admin' && this.emailSaveTemplate()) this.loadEmailTemplates();
+        if (this.user()?.role === 'admin') this.loadEmailLog();
+      },
+      error: error => { this.notify(this.errorMessage(error)); this.emailSending.set(false); }
+    });
+  }
+
+  /** Envía la nota de devolución: mismo remitente por empresa, mensaje propio. */
+  private sendCreditEmail(invoice: Invoice | null, credit: CreditRecord) {
+    if (!invoice || !invoice.id || this.emailSending()) return;
+    if (!this.emailTo().trim()) {
+      this.notify(this.language() === 'es' ? 'Captura al menos un destinatario.' : 'Enter at least one recipient.');
+      return;
+    }
+    const agent = this.emailAgent();
+    const ccParts = [this.emailCc().trim()];
+    if (this.emailIncludeAgent() && agent?.email) ccParts.push(agent.email);
+    this.emailSending.set(true);
+    this.http.post<{ message: string }>(`/api/invoices/${invoice.id}/send-credit-email`, {
+      to: this.emailTo(),
+      cc: ccParts.filter(Boolean).join(', '),
+      subject: this.emailSubject(),
+      bodyHtml: this.emailBody(),
+      logo: this.emailLogo(),
+      placeholders: this.creditPlaceholderValues(invoice, credit),
+      saveTemplate: this.emailSaveTemplate(),
+      companyKey: this.creditCompanyKey(this.invoiceIssuerKey(invoice)),
+      creditNumber: credit.creditNumber || '',
+      creditPath: credit.creditPdfPath || ''
+    }, this.authOptions()).subscribe({
+      next: response => {
+        this.notify(response.message);
+        this.emailSending.set(false);
+        this.emailDialogOpen.set(false);
+        this.emailInvoice.set(null);
+        this.emailCreditContext.set(null);
+        if (this.user()?.role === 'admin' && this.emailSaveTemplate()) this.loadEmailTemplates();
+        if (this.user()?.role === 'admin') this.loadEmailLog();
       },
       error: error => { this.notify(this.errorMessage(error)); this.emailSending.set(false); }
     });
@@ -3049,6 +3629,35 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     });
   }
 
+  /** Notas de devolucion de la factura que tienen PDF para abrir. */
+  invoiceReturns(invoice: Invoice): CreditRecord[] {
+    return this.creditFlagsForInvoice(invoice).filter(credit => credit.creditSharePointUrl || credit.creditPdfPath);
+  }
+
+  /** Total devuelto de la factura, para la columna Devolucion. */
+  invoiceReturnTotal(invoice: Invoice): number {
+    return this.invoiceReturns(invoice).reduce((sum, credit) => sum + Number(credit.amount || 0), 0);
+  }
+
+  /** Abre las notas de devolucion unidas en un solo PDF. */
+  openCreditsPdf(invoice: Invoice, event: Event) {
+    event.stopPropagation();
+    if (!invoice.id) return;
+    const returns = this.invoiceReturns(invoice);
+    // una sola nota en SharePoint no pasa por el union: se abre directo
+    if (returns.length === 1 && returns[0].creditSharePointUrl && !returns[0].creditPdfPath) {
+      window.open(returns[0].creditSharePointUrl, '_blank', 'noopener');
+      return;
+    }
+    const token = sessionStorage.getItem('fc-token');
+    this.showPdfViewer(
+      `/api/invoices/${invoice.id}/credits-pdf?token=${encodeURIComponent(token || '')}`,
+      `${this.language() === 'es' ? 'Devolución' : 'Return'} · ${invoice.folio || ''}`.trim(),
+      invoice.client,
+      `Return-${invoice.folio || invoice.id}.pdf`
+    );
+  }
+
   openCreditPdf(invoice: Invoice, credit: CreditRecord, event: Event) {
     event.stopPropagation();
     if (credit.creditSharePointUrl) {
@@ -3061,7 +3670,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       // Ábrelos en el visor del portal para conservar la sesión actual y
       // evitar que una pestaña nueva los redirija al login.
       this.showPdfViewer(
-        `/api/invoices/${invoice.id}/credits-pdf?token=${encodeURIComponent(token || '')}`,
+        `/api/invoices/${invoice.id}/credit-pdf?creditNumber=${encodeURIComponent(credit.creditNumber || '')}&creditPath=${encodeURIComponent(credit.creditPdfPath)}&token=${encodeURIComponent(token || '')}`,
         `${this.language() === 'es' ? 'Crédito' : 'Credit'} ${credit.creditNumber || ''}`.trim(),
         invoice.client,
         `Credit-${credit.creditNumber || invoice.folio}.pdf`
@@ -3214,6 +3823,10 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       : Math.max(0, Number(invoice.balance ?? invoice.amount - (invoice.creditAmount || 0)));
   }
 
+  private accountStatementBalance(invoice: Invoice) {
+    return accountStatementInvoiceBalance(invoice, this.statementDateTo());
+  }
+
   /** Razones sociales con las que este cliente pudo guardarse antes. */
   private customerLegacyKeys(aliasKey: string): string[] {
     const keys = new Set<string>();
@@ -3316,7 +3929,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   private accountStatementAgingRow(invoice: Invoice): AccountStatementAgingRow {
-    const balance = this.invoiceBalance(invoice);
+    const balance = this.accountStatementBalance(invoice);
     const daysExpiration = this.accountStatementDaysExpiration(invoice.due || invoice.issued);
     const agingBucket: AccountStatementAgingBucket = daysExpiration <= 0 ? '0' : daysExpiration <= 30 ? '1-30' : daysExpiration <= 60 ? '31-60' : daysExpiration <= 90 ? '61-90' : '90+';
     return {
@@ -3373,7 +3986,10 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   private accountStatementDaysExpiration(dateValue: string): number {
     if (!dateValue) return 0;
     const dueTime = Date.parse(`${String(dateValue).slice(0, 10)}T00:00:00Z`);
-    const reportTime = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    // Al simular un corte, la antigüedad debe calcularse contra esa fecha,
+    // no contra hoy. Así cambian también las columnas de aging y el Excel.
+    const reportDate = this.statementDateTo() || new Date().toISOString().slice(0, 10);
+    const reportTime = Date.parse(`${reportDate}T00:00:00Z`);
     if (Number.isNaN(dueTime) || Number.isNaN(reportTime)) return 0;
     return Math.round((reportTime - dueTime) / 86400000);
   }
@@ -3416,6 +4032,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   replacingInvoiceId = signal<number | null>(null);
   private invoiceSyncPollTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly invoiceSyncJobStorageKey = 'fc-invoice-sync-job';
+  private readonly walmexCacheKey = 'fc-walmex-invoices';
 
   syncStatement(event: any) {
     const file = event.target.files[0];
@@ -3969,7 +4586,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   checkAllocationDetails(check: CheckRecord) {
     const total = Number(check.total) || 0;
     return (check.allocations || []).map(a => {
-      const invoice = this.invoices().find(inv => inv.id === a.invoiceId);
+      const invoice = this.invoices().find(inv => String(inv.id) === String(a.invoiceId));
       const amount = Number(a.amount) || 0;
       return {
         folio: a.folio || invoice?.folio || String(a.invoiceId),
@@ -3983,7 +4600,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
 
   openCheckEditor(check: CheckRecord) {
     const allocations = (check.allocations || []).map(a => {
-      const invoice = this.invoices().find(inv => inv.id === a.invoiceId);
+      const invoice = this.invoices().find(inv => String(inv.id) === String(a.invoiceId));
       return {
         invoiceId: a.invoiceId,
         folio: a.folio || invoice?.folio || String(a.invoiceId),
@@ -4008,7 +4625,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     this.editCheckForm.update(f => ({ ...f, series: value }));
   }
 
-  updateEditAllocationAmount(invoiceId: number, value: any) {
+  updateEditAllocationAmount(invoiceId: number | string, value: any) {
     const amount = Number(value) || 0;
     this.editCheckForm.update(f => ({
       ...f,
@@ -4016,7 +4633,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     }));
   }
 
-  removeEditAllocation(invoiceId: number) {
+  removeEditAllocation(invoiceId: number | string) {
     const alloc = this.editCheckForm().allocations.find(a => a.invoiceId === invoiceId);
     const folio = alloc?.folio || invoiceId;
     const msg = this.language() === 'es'
@@ -4273,11 +4890,11 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     this.saveCheck();
   }
 
-  toggleCheckInvoice(invoiceId: number) {
+  toggleCheckInvoice(invoiceId: number | string) {
     const alreadySelected = this.selectedCheckInvoiceIds().includes(invoiceId);
     if (alreadySelected) {
       this.selectedCheckInvoiceIds.update(ids => ids.filter(id => id !== invoiceId));
-      this.checkInvoiceAmounts.update(map => { const next = { ...map }; delete next[invoiceId]; return next; });
+      this.checkInvoiceAmounts.update(map => { const next = { ...map }; delete next[String(invoiceId)]; return next; });
       return;
     }
     const invoice = this.checkInvoices().find(inv => inv.id === invoiceId);
@@ -4290,10 +4907,10 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       ? Number(Math.max(0, Math.min(balance, total - this.checkSelectedBalance())).toFixed(2))
       : Number(balance.toFixed(2));
     this.selectedCheckInvoiceIds.update(ids => [...ids, invoiceId]);
-    this.checkInvoiceAmounts.update(map => ({ ...map, [invoiceId]: suggested }));
+    this.checkInvoiceAmounts.update(map => ({ ...map, [String(invoiceId)]: suggested }));
   }
 
-  setCheckInvoiceAmount(invoiceId: number, rawValue: string | number) {
+  setCheckInvoiceAmount(invoiceId: number | string, rawValue: string | number) {
     const invoice = this.checkInvoices().find(inv => inv.id === invoiceId);
     if (!invoice) return;
     const balance = this.invoiceBalance(invoice);
@@ -4301,7 +4918,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     if (!Number.isFinite(amount) || amount < 0) amount = 0;
     if (amount > balance) amount = balance;
     amount = Number(amount.toFixed(2));
-    this.checkInvoiceAmounts.update(map => ({ ...map, [invoiceId]: amount }));
+    this.checkInvoiceAmounts.update(map => ({ ...map, [String(invoiceId)]: amount }));
     const isSelected = this.selectedCheckInvoiceIds().includes(invoiceId);
     if (amount > 0 && !isSelected) {
       this.selectedCheckInvoiceIds.update(ids => [...ids, invoiceId]);
@@ -4359,15 +4976,18 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       ? selectedCustomers.join(', ')
       : (isSpanish ? 'Todos los clientes' : 'All customers');
     const issueDates = invoices.map(invoice => String(invoice.issued || '').slice(0, 10)).filter(Boolean).sort();
-    const periodStart = issueDates[0] || new Date().toISOString().slice(0, 10);
-    const periodEnd = new Date().toISOString().slice(0, 10);
+    // Exportar exactamente el mismo rango que está aplicado en pantalla.
+    // Si no se selecciona una fecha, se conserva el comportamiento actual.
+    const periodStart = this.statementDateFrom() || issueDates[0] || new Date().toISOString().slice(0, 10);
+    const periodEnd = this.statementDateTo() || new Date().toISOString().slice(0, 10);
     const generatedAt = new Date().toLocaleDateString(isSpanish ? 'es-MX' : 'en-US');
     const totals = this.accountStatementTotals();
     const statementGroups = this.accountStatementGroups();
     const summaryRows = this.accountStatementSummaryRows();
     const summaryTotals = this.accountStatementSummaryTotals();
-    const walmexPesos = invoices.filter(invoice => this.isWalmexInvoice(invoice)).reduce((sum, invoice) => sum + this.invoiceBalance(invoice), 0);
-    const exportBalance = totals.balance - walmexPesos + this.walmexPesosToDollars(walmexPesos);
+    // El saldo superior del Excel usa exactamente el mismo total visible en Summary,
+    // incluyendo el corte sin cheques y la conversión especial de Walmex.
+    const exportBalance = this.accountStatementSummaryGrandTotals().balance;
     const moneyFormat = '"$"#,##0.00';
 
     // Centro Floricultor va al final, en su propio bloque. Solo se rotula
@@ -4637,13 +5257,65 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
 
   private loadInvoices(onLoaded?: () => void) {
     this.loading.set(true);
-    this.http.get<Invoice[]>('/api/invoices', this.authOptions()).subscribe({
-      next: invoices => { this.invoices.set(invoices); this.initInvoiceDateRange(invoices); this.loading.set(false); onLoaded?.(); },
+    const pageSize = 100;
+    const loadPage = (page: number, accumulated: Invoice[]) => {
+      this.http.get<Invoice[] | { items: Invoice[]; total: number }>(`/api/invoices?page=${page}&pageSize=${pageSize}`, this.authOptions()).subscribe({
+        next: response => {
+          const items = Array.isArray(response) ? response : (response.items || []);
+          const invoices = [...accumulated, ...items];
+          const total = Array.isArray(response) ? invoices.length : Number(response.total || invoices.length);
+          if (invoices.length < total && items.length) {
+            loadPage(page + 1, invoices);
+            return;
+          }
+          this.invoices.set(invoices);
+          this.initInvoiceDateRange(invoices);
+          this.loading.set(false);
+          onLoaded?.();
+          this.loadWalmexInvoices();
+        },
+        error: error => {
+          this.loading.set(false);
+          if (error.status === 401) this.clearSession();
+          else this.notify(this.errorMessage(error));
+        }
+      });
+    };
+    loadPage(1, []);
+  }
+
+  private loadWalmexInvoices() {
+    this.http.get<{ invoices: Invoice[]; stale?: boolean }>('/api/walmex/invoices', this.authOptions()).subscribe({
+      next: response => {
+        const walmex = Array.isArray(response?.invoices) ? response.invoices : [];
+        if (walmex.length) sessionStorage.setItem(this.walmexCacheKey, JSON.stringify(walmex));
+        if (response?.stale) {
+          try {
+            const cached = JSON.parse(sessionStorage.getItem(this.walmexCacheKey) || '[]');
+            if (Array.isArray(cached)) this.mergeWalmexInvoices(cached);
+          } catch { /* ignore invalid cache */ }
+          return;
+        }
+        this.mergeWalmexInvoices(walmex);
+      },
       error: error => {
-        this.loading.set(false);
-        if (error.status === 401) this.clearSession();
-        else this.notify(this.errorMessage(error));
-      }
+        try {
+          const cached = JSON.parse(sessionStorage.getItem(this.walmexCacheKey) || '[]');
+          if (shouldUseWalmexCache(error.status) && Array.isArray(cached) && cached.length) this.mergeWalmexInvoices(cached);
+          if (!shouldUseWalmexCache(error.status)) {
+            sessionStorage.removeItem(this.walmexCacheKey);
+            this.invoices.update(current => current.filter(invoice => !this.isWalmexInvoice(invoice)));
+          }
+        } catch { /* ignore invalid cache */ }
+        if (error.status !== 401 && error.status !== 403) return;
+      },
+    });
+  }
+
+  private mergeWalmexInvoices(walmex: Invoice[]) {
+    this.invoices.update(current => {
+      const regular = current.filter(invoice => !this.isWalmexInvoice(invoice));
+      return [...regular, ...walmex].sort((a, b) => String(b.issued || b.id || '').localeCompare(String(a.issued || a.id || '')));
     });
   }
 
@@ -4663,12 +5335,15 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       : '<p>Dear customer,</p><p>Please find your account statement as of {{fecha}}, with an outstanding balance of <strong>{{saldo}}</strong> across {{facturas}} open invoice(s).</p><p>We remain at your service.</p><p>Best regards,<br>{{empresa}}</p>';
   }
 
-  openStatementEmail(group: any) {
-    const invoice: Invoice | undefined = group.rows?.[0]?.invoice;
-    if (!invoice) return;
+  /**
+   * Con que se manda el estado de cuenta de un cliente: destinatarios del
+   * cliente y mensaje de la empresa emisora. Lo usan el cuadro manual y el
+   * envio masivo, para que uno no se comporte distinto del otro.
+   */
+  private statementEmailContext(group: any) {
     // el alias agrupa las razones sociales del cliente; la llave no puede
     // salir de la factura que quede primero, porque cambia con el orden
-    const aliasKey = this.customerAliasKey(group.customerName);
+    const aliasKey = this.customerAliasKey(group?.customerName || '');
     const legacyKeys = this.customerLegacyKeys(aliasKey);
     const templates = this.emailTemplates();
     // el mensaje del estado de cuenta se guarda aparte del de la factura: son
@@ -4681,30 +5356,56 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     // el mensaje lo pone la empresa emisora del saldo
     const message = companyTemplate || stmtTemplate || generalTemplate;
     const template = stmtTemplate || invoiceTemplate || generalTemplate;
-    const isSpanish = this.language() === 'es';
+    const logoTemplate = companyTemplate || template;
+    const admin = this.user()?.role === 'admin';
+    const mailLang: 'es' | 'en' = this.language() === 'es' ? 'es' : 'en';
+    const agent = this.agentForCustomerName(group?.customerName || '');
+    return {
+      aliasKey,
+      issuer,
+      agent,
+      // Solo lo capturado para el estado de cuenta: no hereda de la factura ni
+      // usa el correo que trae la factura. Ese trae capturas de prueba (como
+      // "billdoran@dallas" en el cliente de Portland) y nadie las revisa antes
+      // de que salgan. Se captura una vez al enviar y desde ahi queda guardado.
+      to: admin ? (stmtTemplate?.to || '') : (this.user()?.email || ''),
+      cc: admin ? (stmtTemplate?.cc || '') : '',
+      // lo guardado para el cliente manda sobre la plantilla por omision:
+      // si el mensaje se escribio en ingles, vuelve en ingles
+      subject: message?.subject || this.statementDefaultSubject(group, mailLang),
+      bodyHtml: message?.bodyHtml || this.statementDefaultBody(mailLang),
+      logo: logoTemplate?.logo || '',
+      logoKey: logoTemplate?.clientKey || '',
+      clientKey: clientTemplateKey('statement', aliasKey),
+      companyKey: companyTemplateKey('statement', issuer),
+      companyName: this.issuerName(issuer),
+    };
+  }
+
+  openStatementEmail(group: any) {
+    const invoice: Invoice | undefined = group.rows?.[0]?.invoice;
+    if (!invoice) return;
+    const context = this.statementEmailContext(group);
 
     this.stmtEmailGroup.set(group);
-    // los destinatarios si sirven igual para ambos correos
-    this.stmtEmailTo.set(stmtTemplate?.to || invoiceTemplate?.to || invoice.email || '');
-    this.stmtEmailCc.set(stmtTemplate?.cc || invoiceTemplate?.cc || '');
-    this.emailTemplateCompany.set(this.issuerName(issuer));
-    const mailLang: 'es' | 'en' = isSpanish ? 'es' : 'en';
-    // lo guardado para el cliente manda sobre la plantilla por omision:
-    // si el mensaje se escribio en ingles, vuelve en ingles
-    this.stmtEmailSubject.set(message?.subject || this.statementDefaultSubject(group, mailLang));
-    this.stmtEmailBody.set(message?.bodyHtml || this.statementDefaultBody(mailLang));
+    this.stmtEmailTo.set(context.to);
+    this.stmtEmailCc.set(context.cc);
+    this.emailTemplateCompany.set(context.companyName);
+    this.stmtEmailSubject.set(context.subject);
+    this.stmtEmailBody.set(context.bodyHtml);
     this.stmtEmailBodyInitial.set(this.stmtEmailBody());
-    this.stmtEmailLogo.set(companyTemplate ? (companyTemplate.logo || '') : (template?.logo || ''));
+    this.stmtEmailLogo.set(context.logo);
     this.stmtEmailFormat.set('excel');
-    const agent = this.agentForCustomerName(group.customerName);
+    const agent = context.agent;
     this.stmtEmailAgent.set(agent);
     this.stmtEmailAgentTo.set(agent?.email || '');
     // el correo se captura en el catalogo de agentes, aqui solo se usa
     this.stmtEmailIncludeAgent.set(!!agent?.email);
-    this.stmtEmailSaveTemplate.set(true);
+    this.stmtEmailSaveTemplate.set(this.user()?.role === 'admin');
     this.stmtEmailPreview.set('');
     this.emailFieldContext.set('statement');
     this.stmtEmailOpen.set(true);
+    this.loadEmailTemplateLogo(context.logoKey, 'statement');
     this.tinymceError.set(false);
     this.loadTinymceScript().catch(() => {
       this.notify(this.language() === 'es' ? 'No se pudo cargar el editor de mensajes.' : 'The message editor could not be loaded.');
@@ -5013,7 +5714,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
           this.stmtEmailSending.set(false);
           this.stmtEmailOpen.set(false);
           this.stmtEmailGroup.set(null);
-          if (this.stmtEmailSaveTemplate()) this.loadEmailTemplates();
+          if (this.user()?.role === 'admin' && this.stmtEmailSaveTemplate()) this.loadEmailTemplates();
         },
         error: error => { this.notify(this.errorMessage(error)); this.stmtEmailSending.set(false); }
       });
@@ -5124,21 +5825,19 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     });
   }
 
-  loadReconciliation() {
+  async loadReconciliation() {
     this.reconciliationLoading.set(true);
-    this.http.get<ReconciliationResponse>('/api/reconciliation', this.authOptions()).subscribe({
-      next: result => {
-        this.reconciliationRows.set(result.rows);
-        this.reconciliationTotals.set(result.totals);
-        this.reconciliationSource.set(result.source);
-        this.reconciliationStatementSource.set(result.statementSource || '');
-        this.reconciliationLoading.set(false);
-      },
-      error: error => {
-        this.reconciliationLoading.set(false);
-        this.notify(this.errorMessage(error));
-      }
-    });
+    try {
+      let page = 1; let result: ReconciliationResponse | null = null; const rows: ReconciliationRow[] = [];
+      do {
+        result = await firstValueFrom(this.http.get<ReconciliationResponse>(`/api/reconciliation?page=${page}&pageSize=100`, this.authOptions()));
+        rows.push(...(result.rows || []));
+        if (!result.pagination || rows.length >= result.pagination.total || !result.rows.length) break;
+        page += 1;
+      } while (page < 1000);
+      if (result) { this.reconciliationRows.set(rows); this.reconciliationTotals.set(result.totals); this.reconciliationSource.set(result.source); this.reconciliationStatementSource.set(result.statementSource || ''); }
+    } catch (error) { this.notify(this.errorMessage(error)); }
+    finally { this.reconciliationLoading.set(false); }
   }
 
   uploadReconciliationExcel(event: Event) {
@@ -5184,6 +5883,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     localStorage.removeItem(this.invoiceSyncJobStorageKey);
     sessionStorage.removeItem('fc-token');
     sessionStorage.removeItem('fc-user');
+    sessionStorage.removeItem(this.walmexCacheKey);
     this.user.set(null);
     this.invoices.set([]);
     this.clients.set([]);

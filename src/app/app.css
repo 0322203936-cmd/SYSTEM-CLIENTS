@@ -129,10 +129,10 @@ table td { vertical-align: middle; }
 .portal-nav-item kendo-svg-icon::after { position: absolute; top: 0; right: 0; width: 5px; height: 5px; border-radius: 50%; background: #e6aa32; box-shadow: -6px 4px 0 -.5px rgb(230 170 50 / .9); content: ''; }
 .portal-nav-item.portal-nav-item-active > kendo-svg-icon { color: #2e9c1e; }
 .portal-nav-item.portal-nav-item-active span { color: #2e9c1e !important; }
-.portal-nav-item:last-child { margin-top: auto; width: 100%; background: #114267; padding-block: .7rem; }
-.portal-nav-item:last-child:hover { background: #143b57; }
-.portal-nav-item.portal-nav-item-active:last-child,
-.portal-nav-item.portal-nav-item-active:last-child:hover { background: #fff; }
+.portal-nav-bottom-item { margin-top: auto; width: 100%; background: #114267; padding-block: .7rem; }
+.portal-nav-bottom-item:hover { background: #143b57; }
+.portal-nav-bottom-item.portal-nav-item-active,
+.portal-nav-bottom-item.portal-nav-item-active:hover { background: #fff; }
 
 .portal-brand > span:last-child, .portal-sidebar-footer span { display: none; }
 .portal-nav-item span {
@@ -1019,7 +1019,7 @@ table td { vertical-align: middle; }
 .account-statement-customer-heading > div { display: flex; flex-wrap: wrap; gap: .85rem 1.5rem; }
 .account-statement-customer-heading span { color: #668078; }
 .account-statement-customer-heading strong { color: #173f4a; font-weight: 750; }
-.account-statement-aging-table { width: 100%; min-width: 1180px; table-layout: fixed; }
+.account-statement-aging-table { width: 100%; min-width: 1300px; table-layout: fixed; }
 .account-statement-aging-table th,
 .account-statement-aging-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .account-statement-aging-table thead th { position: static; padding: .5rem .65rem !important; background: #0e7079 !important; color: #fff !important; border-right: 1px solid rgb(255 255 255 / .28); border-bottom: 0; font-size: .66rem; font-weight: 750; text-align: center; }
@@ -1028,12 +1028,15 @@ table td { vertical-align: middle; }
 .account-statement-sort-button span { display: none; }
 .account-statement-sort-button:hover { color: #d7f5e7; }
 .account-statement-sort-button:focus-visible { outline: 2px solid #d7f5e7; outline-offset: 2px; border-radius: 3px; }
-.account-statement-aging-table thead th:nth-child(1) { width: 10%; }
-.account-statement-aging-table thead th:nth-child(2) { width: 10%; }
-.account-statement-aging-table thead th:nth-child(3) { width: 15%; }
-.account-statement-aging-table thead th:nth-child(4) { width: 10%; }
-.account-statement-aging-table thead th:nth-child(5) { width: 10%; }
-.account-statement-aging-table thead th:nth-child(n+6) { width: 9%; }
+.account-statement-aging-table thead th:nth-child(1) { width: 8%; }
+.account-statement-aging-table thead th:nth-child(2) { width: 8%; }
+.account-statement-aging-table thead th:nth-child(3) { width: 12%; }
+.account-statement-aging-table thead th:nth-child(4) { width: 8%; }
+.account-statement-aging-table thead th:nth-child(5) { width: 7%; }
+.account-statement-aging-table thead th:nth-child(n+6) { width: 8%; }
+/* Total y Acción al final; Acción angosta */
+.account-statement-aging-table thead th.as-total-col { width: 10%; text-align: right; }
+.account-statement-aging-table thead th.as-view-col { width: 7%; }
 .account-statement-aging-table tbody td { padding: .45rem .65rem; color: #29435b; font-size: .72rem; border-bottom: 1px solid #edf2ef; }
 .account-statement-aging-table tbody tr:nth-child(even) td { background: #f8faf9; }
 .account-statement-aging-table tbody td:nth-child(3), .account-statement-aging-table tbody td:nth-child(4) { color: #086b85; font-weight: 650; }
@@ -1473,6 +1476,12 @@ table td { vertical-align: middle; }
   min-height: 200px; border: 1px solid #dde5e0; border-radius: 10px; background: #fafcfb;
   font-size: .8rem; font-weight: 600; color: #7a8b91;
 }
+.email-readonly-message {
+  min-height: 110px; max-height: 280px; overflow: auto; padding: .75rem .9rem;
+  border: 1px solid #dde5e0; border-radius: 10px; background: #fafcfb;
+  color: #33474d; font-size: .84rem; line-height: 1.5;
+}
+.email-grid-single { grid-template-columns: minmax(0, 1fr) !important; }
 .email-editor-failed { color: #b3261e; border-color: #ecd6d3; background: #fdf7f6; }
 .email-editor-failed mat-icon { width: 18px; height: 18px; font-size: 18px; }
 
@@ -2801,8 +2810,8 @@ table td { vertical-align: middle; }
 .cd-page .cd-action-edit:hover { background: #e8f0f6; }
 .cd-page .cd-action-delete { color: #c0392b; }
 .cd-page .cd-action-delete:hover { background: #fbeceb; }
-.cd-page .cd-action-pdf { color: #c0392b; }
-.cd-page .cd-action-pdf:hover { background: #fbeceb; }
+.cd-page .cd-action-pdf { color: #176b78; }
+.cd-page .cd-action-pdf:hover { background: #eaf3f4; }
 .cd-page .cd-action-pdf mat-icon { width: 18px; height: 18px; font-size: 18px; line-height: 18px; }
 
 /* encabezado Cliente con boton de filtro */
@@ -3130,6 +3139,14 @@ table td { vertical-align: middle; }
 }
 ::ng-deep .as-page .account-statement-aging-table .p-datatable-tfoot > tr > td:first-child { text-align: left; }
 ::ng-deep .as-page .account-statement-aging-table .p-datatable-tfoot .money-cell { color: #187c4a; }
+/* El Total del cliente resaltado: fondo turquesa claro. Va con ::ng-deep para
+   ganarle al tema de PrimeNG y a las demas reglas globales del tfoot. */
+::ng-deep .as-page .account-statement-aging-table .p-datatable-tfoot .as-total-cell {
+  background: #ddeeef;
+  color: #134567;
+  font-weight: 800;
+  border-left: 1px solid #d3e5e5;
+}
 
 ::ng-deep .as-page .as-table .money-cell { text-align: right; font-variant-numeric: tabular-nums; }
 ::ng-deep .as-page .as-table .account-statement-days-overdue { color: #c0392b; font-weight: 700; }
@@ -3635,6 +3652,8 @@ table td { vertical-align: middle; }
   transition: background-color .16s ease, border-color .16s ease;
 }
 .as-page .stmt-mail-button:hover { border-color: #187c4a; background: #eaf5ef; }
+.as-page .stmt-mail-button i { font-size: 14px; line-height: 1; }
+/* limpio los estilos del boton que ya no vive en el pie */
 .as-page .stmt-mail-button mat-icon { width: 16px; height: 16px; font-size: 16px; line-height: 16px; }
 
 .stmt-mail-backdrop {
@@ -3720,6 +3739,7 @@ table td { vertical-align: middle; }
   resize: vertical;
 }
 .stmt-mail-field input { height: 36px; padding: 0 10px; }
+.stmt-mail-row-client { grid-template-columns: minmax(0, 1fr) !important; }
 .stmt-mail-field input:focus,
 .stmt-mail-field textarea:focus { border-color: #187c4a; }
 
@@ -3884,3 +3904,253 @@ table td { vertical-align: middle; }
 }
 .portal-icon-action-btn.portal-icon-action-send.is-sent i { color: #fff !important; }
 .portal-icon-action-btn.portal-icon-action-send.is-sent:hover { background: #087b80 !important; }
+
+/* ── Envío masivo ──────────────────────────────────────────────────────
+   El cuadro nunca pasa de la pantalla: alto tope de 88vh, encabezado y
+   pie fijos, y solo la lista del centro se desplaza. */
+/* El envio masivo vive en el encabezado de Action: solo el icono, para no
+   cargar la barra de arriba. */
+.ol-page .invoice-actions-head { display: flex; align-items: center; gap: 8px; }
+.ol-page .bulkHeadBtn {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition: background-color .16s ease;
+}
+.ol-page .bulkHeadBtn:hover { background: rgb(255 255 255 / .18); }
+.ol-page .bulkHeadIcon { width: 19px; height: 19px; display: block; }
+
+.bulk-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgb(14 33 25 / .55);
+}
+.bulk-dialog {
+  display: flex;
+  width: min(880px, 100%);
+  max-height: 88vh;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgb(12 34 48 / .28);
+}
+
+.bulk-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: .5rem .6rem 0;
+}
+.bulk-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #6c7e86;
+  cursor: pointer;
+}
+.bulk-close:hover:not(:disabled) { background: #f1f5f6; }
+.bulk-close:disabled { cursor: not-allowed; opacity: .45; }
+
+.bulk-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: .75rem 1rem;
+  padding: .85rem 1.2rem;
+  border-bottom: 1px solid #eef2f3;
+  background: #fbfdfe;
+}
+.bulk-field { display: flex; min-width: 0; flex-direction: column; gap: .25rem; }
+.bulk-field span { color: #5f7b83; font-size: .7rem; font-weight: 600; }
+.bulk-field input {
+  height: 34px;
+  padding: 0 .55rem;
+  border: 1px solid #d5e2e5;
+  border-radius: 6px;
+  color: #29435b;
+  font-size: .8rem;
+}
+.bulk-check { display: flex; align-items: center; gap: .4rem; padding-bottom: .45rem; color: #29435b; font-size: .78rem; cursor: pointer; }
+
+.bulk-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: .35rem 1.2rem 1rem; }
+
+.bulk-row { padding: .7rem 0; border-bottom: 1px solid #f1f5f6; }
+.bulk-row:last-child { border-bottom: 0; }
+.bulk-row-head { display: flex; align-items: center; gap: .55rem; cursor: pointer; }
+.bulk-row-name { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #173f4a; font-size: .85rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.bulk-row-count { flex: 0 0 auto; padding: .1rem .5rem; border-radius: 10px; background: #eef4f5; color: #5f7b83; font-size: .7rem; font-weight: 700; }
+/* correos y fichas en el mismo renglon: los correos se encogen y las
+   fichas conservan su tamano a la derecha */
+.bulk-row-detail { display: flex; align-items: center; justify-content: space-between; gap: .9rem; margin: .18rem 0 0 1.65rem; }
+.bulk-row-to { min-width: 0; flex: 1 1 auto; margin: 0; overflow: hidden; color: #7d8f9a; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+
+.bulk-chips { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.bulk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: .2rem .5rem;
+  border: 1px solid #d5e2e5;
+  border-radius: 5px;
+  background: #fff;
+  color: #7d8f9a;
+  font-size: .72rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color .14s ease, border-color .14s ease, color .14s ease;
+}
+.bulk-chip.on { border-color: #0e7079; background: #0e7079; color: #fff; }
+/* naranja = esa factura no tiene recibimiento, se enviaria sola */
+.bulk-chip.no-receiving { border-color: #d97706; color: #b45309; }
+.bulk-chip.no-receiving.on { border-color: #d97706; background: #d97706; color: #fff; }
+/* el resultado del envio manda sobre el color de recibimiento */
+.bulk-chip.ok, .bulk-chip.no-receiving.ok { border-color: #187c4a; background: #187c4a; color: #fff; }
+.bulk-chip.bad, .bulk-chip.no-receiving.bad { border-color: #b42318; background: #fdeceb; color: #b42318; }
+.bulk-chip:disabled { cursor: default; }
+
+.bulk-empty { padding: 1.5rem 0; color: #8fa0aa; font-size: .8rem; text-align: center; }
+
+.bulk-blocked { margin-top: .9rem; padding: .8rem .9rem; border: 1px dashed #e2c9a6; border-radius: 8px; background: #fdf8f0; }
+.bulk-blocked h4 { margin: 0; color: #8a5a12; font-size: .78rem; font-weight: 700; }
+.bulk-blocked > p { margin: .15rem 0 .5rem; color: #9b7a48; font-size: .72rem; }
+.bulk-blocked-row { display: flex; justify-content: space-between; gap: .75rem; padding: .22rem 0; color: #6d5a3c; font-size: .75rem; }
+
+.bulk-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .6rem 1rem;
+  padding: .85rem 1.2rem;
+  border-top: 1px solid #eef2f3;
+  background: #fbfdfe;
+}
+.bulk-foot-info { display: flex; align-items: baseline; flex-wrap: wrap; gap: .45rem; min-width: 0; }
+.bulk-foot-info strong { color: #173f4a; font-size: .85rem; }
+.bulk-foot-info span { color: #7d8f9a; font-size: .75rem; }
+.bulk-foot-error { color: #b42318 !important; }
+.bulk-foot-actions { display: flex; gap: .5rem; }
+.bulk-cancel, .bulk-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+  padding: 0 .95rem;
+  border-radius: 6px;
+  font-size: .8rem;
+  cursor: pointer;
+}
+.bulk-cancel { border: 1px solid #d5e2e5; background: #fff; color: #5f7b83; }
+.bulk-send { border: 0; background: #0e7079; color: #fff; font-weight: 600; }
+.bulk-send:hover:not(:disabled) { background: #087b80; }
+.bulk-send:disabled, .bulk-cancel:disabled { cursor: not-allowed; opacity: .5; }
+.bulk-send mat-icon { width: 17px; height: 17px; font-size: 17px; line-height: 17px; }
+
+@media (max-width: 640px) {
+  .bulk-backdrop { padding: .5rem; }
+  .bulk-dialog { max-height: 94vh; }
+  .bulk-toolbar { gap: .6rem .75rem; }
+  .bulk-field { flex: 1 1 130px; }
+  .bulk-check { flex: 1 1 100%; padding-bottom: 0; }
+  .bulk-foot { align-items: stretch; flex-direction: column; }
+  .bulk-foot-actions { justify-content: flex-end; }
+}
+
+
+/* El estado del usuario es el interruptor de acceso: se ve igual que antes,
+   pero ahora se puede presionar. */
+.users-status-badge { border: 0; cursor: pointer; transition: filter .16s ease; }
+.users-status-badge:hover:not(:disabled) { filter: brightness(.92); }
+.users-status-badge:disabled { cursor: not-allowed; opacity: .55; }
+
+/* ── Columna Devolución ──────────────────────────────────────────────────
+   Bandera coral clicable + total devuelto. La bandera abre las notas de
+   devolución unidas en un solo PDF. Coral para no chocar con el ámbar del
+   balance ni el rojo de "Vencida". */
+.invoice-return-cell { display: inline-flex; align-items: center; gap: 6px; }
+.invoice-return-flag {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #d85a30;
+  cursor: pointer;
+  transition: background-color .15s ease;
+}
+.invoice-return-flag:hover { background: #faece7; }
+.invoice-return-flag mat-icon { width: 17px; height: 17px; font-size: 17px; line-height: 17px; }
+.invoice-return-amount { color: #d85a30; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Enviar devolución por correo: mismo icono de compartir que facturas, y
+   cuando ya se envió queda encerrado en un círculo teal, igual que allá. */
+.cd-page .cd-action-send { color: #176b78; }
+.cd-page .cd-action-send:hover { background: #eaf3f4; }
+.cd-page .cd-action-send i { font-size: 15px; line-height: 1; }
+.cd-page .cd-action-send.is-sent { background: #0e7079; color: #fff; }
+.cd-page .cd-action-send.is-sent:hover { background: #087b80; color: #fff; }
+
+
+/* Columna "Ver" del estado de cuenta: botones de factura y recibimiento,
+   los mismos de Invoices. */
+.account-statement-aging-table th.as-view-col { text-align: center; }
+.account-statement-aging-table td.as-view-cell { text-align: center; white-space: nowrap; }
+.account-statement-aging-table .as-view-btn {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  margin: -2px 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #176b78;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: background-color .15s ease;
+}
+.account-statement-aging-table .as-view-btn:hover { background: #eaf3f4; }
+.account-statement-aging-table .as-view-btn i { font-size: 13px; line-height: 1; }
+
+.account-statement-aging-table td.as-total-cell { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ===== Envio masivo de estados de cuenta ===== */
+/* el boton vive junto al export de Excel, con su mismo estilo */
+.as-bulk-btn mat-icon { font-size: 21px; width: 21px; height: 21px; }
+
+/* aqui la unidad es el cliente, no la factura: un renglon por correo */
+.stmt-bulk-row { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid #e3e9e6; border-radius: 9px; margin-bottom: 7px; background: #fff; }
+.stmt-bulk-row.ok { border-color: #187c4a; background: #f2faf5; }
+.stmt-bulk-row.bad { border-color: #b42318; background: #fdeceb; }
+.stmt-bulk-pick { display: grid; place-items: center; margin: 0; }
+.stmt-bulk-main { min-width: 0; }
+.stmt-bulk-title { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.stmt-bulk-name, .stmt-bulk-figures strong { color: #16241e; font-weight: 700; }
+.stmt-bulk-issuer { padding: 1px 7px; border-radius: 999px; background: #eaf5ef; color: #0f5c37; font-size: 11px; font-weight: 700; }
+.stmt-bulk-issuer.centro { background: #eef2fb; color: #33509b; }
+.stmt-bulk-last, .stmt-bulk-figures span { color: #6b7b74; font-size: 11px; }
+.stmt-bulk-to { margin: 2px 0 0; color: #5d6d66; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stmt-bulk-figures { display: grid; justify-items: end; gap: 1px; }
