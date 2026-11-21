@@ -1,5 +1,6 @@
 import { neon } from '@neondatabase/serverless';
 import { WALMEX_BALANCES } from './walmex-balance.mjs';
+import { applyCustomerCreditToInvoices, attachCheckCustomerCreditHistory } from '../server/check-customer-credit.mjs';
 
 // The supplied statement was only an initial reference. From this date onward
 // the invoice amount is the authoritative balance, not the old spreadsheet.
@@ -58,7 +59,11 @@ export async function loadWalmexInvoices(databaseUrl, checks = []) {
   `;
   const allocationsByInvoice = new Map();
   for (const check of Array.isArray(checks) ? checks : []) {
-    for (const allocation of Array.isArray(check?.allocations) ? check.allocations : []) {
+    const allApplications = [
+      ...(Array.isArray(check?.allocations) ? check.allocations : []),
+      ...(Array.isArray(check?.customerCredit?.applications) ? check.customerCredit.applications : []),
+    ];
+    for (const allocation of allApplications) {
       const key = String(allocation?.invoiceId || '').trim();
       const amount = Number(allocation?.amount || 0);
       if (!key || !Number.isFinite(amount) || amount <= 0 || !key.toLowerCase().startsWith('walmex-')) continue;
@@ -68,7 +73,7 @@ export async function loadWalmexInvoices(databaseUrl, checks = []) {
     }
   }
 
-  return rows.map((row, index) => {
+  const projected = rows.map((row, index) => {
     const issued = row.issued instanceof Date
       ? row.issued.toISOString().slice(0, 10)
       : (String(row.issued || '').match(/^\d{4}-\d{2}-\d{2}/)?.[0] || '');
@@ -101,4 +106,15 @@ export async function loadWalmexInvoices(databaseUrl, checks = []) {
       readOnly: true,
     };
   });
+  const matchesWalmex = (left, right) => /walmex|walmart\s*m[eé]xico/i.test(String(left || ''))
+    && /walmex|walmart\s*m[eé]xico/i.test(String(right || ''));
+  // Walmex invoices are read-only and arrive from a separate database. Apply
+  // any still-open customer credit deterministically when a later invoice
+  // appears, without writing into that source database.
+  for (const check of [...(Array.isArray(checks) ? checks : [])].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))) {
+    if (check?.customerCredit && matchesWalmex(check.client, 'Walmex')) {
+      applyCustomerCreditToInvoices(projected, check, matchesWalmex);
+    }
+  }
+  return attachCheckCustomerCreditHistory(projected, checks);
 }

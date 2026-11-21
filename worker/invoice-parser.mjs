@@ -18,6 +18,10 @@ function addOneMonth(dateText) {
 }
 
 function extractOrderNumber(text) {
+  // Galleria puede llegar desde OCR como `555 26402082562026 10 04`:
+  // extraemos exclusivamente el AWB (555 + seis dígitos), sin folio ni fecha.
+  const packedGalleriaAwb = text.match(/Order\s*(?:No\.?|Number|#)[\s\S]{0,160}?\b(555)\s*[- ]?\s*(\d{6})(?=\d{4}\s*20\d{2}[-/\s]?\d{2}[-/\s]?\d{2}\b)/i);
+  if (packedGalleriaAwb) return `${packedGalleriaAwb[1]}-${packedGalleriaAwb[2]}`;
   const direct = text.match(/Order\s*(?:No\.?|Number|#)\s*[:\r\n \t]+([A-Z0-9-]+)/i)?.[1]?.trim() || '';
   if (direct && !/^(?:origin|invoice|no|date|division)$/i.test(direct)) return direct;
   return text.match(/Order\s*(?:No\.?|Number|#)[\s\S]{0,160}?\b([A-Z0-9]+(?:-[A-Z0-9]+)+)\b/i)?.[1]?.trim() || '';

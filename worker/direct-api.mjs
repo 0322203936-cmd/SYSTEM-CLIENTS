@@ -22,7 +22,9 @@ import { parseInvoicePagination, pageRows } from '../server/invoice-pagination.m
 import { projectReconciliationInvoice } from '../server/reconciliation-payload.mjs';
 import { buildReconciliationSnapshot, reconciliationCache, usableReconciliationSnapshot } from '../server/reconciliation-cache.mjs';
 import { selectedCreditPdfPath } from '../server/credit-pdf-selection.mjs';
-import { resolveEmailLogin, historyInvoiceAccess, canSendEmailForInvoice, canSendStatementForCustomer, resolveEmailDeliveryRecipients } from '../server/email-login.mjs';
+import { resolveEmailLogin, historyInvoiceAccess, canSendEmailForInvoice, canSendStatementForCustomer, resolveEmailDeliveryRecipients, expandClientKeys } from '../server/email-login.mjs';
+import { buildAccessRecord, summarizeActivity } from '../server/portal-activity.mjs';
+import { applyCustomerCreditToInvoices, applyPendingCustomerCreditsToInvoice, attachCheckCustomerCreditHistory, checkCustomerCreditRemaining } from '../server/check-customer-credit.mjs';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -134,7 +136,11 @@ function invoiceBalance(invoice) {
 }
 
 function reverseCheckAllocations(invoices, check) {
-  for (const allocation of check.allocations || []) {
+  const allocations = [
+    ...(check.allocations || []),
+    ...(check.customerCredit?.applications || []),
+  ];
+  for (const allocation of allocations) {
     const invoice = invoices.find(item => String(item.id) === String(allocation.invoiceId));
     const amount = Number(allocation.amount) || 0;
     if (!invoice || amount <= 0) continue;
@@ -245,6 +251,35 @@ async function saveRecord(sql, collectionName, recordKey, record, position = nul
      DO UPDATE SET position = COALESCE(EXCLUDED.position, app_records.position), record = EXCLUDED.record, updated_at = now()`,
     [collectionName, String(recordKey), position, JSON.stringify(record)],
   );
+}
+
+// Consume a pending customer credit exactly once. Previously the new invoice
+// was updated in memory but the check's application list was not persisted,
+// so the same credit could be applied again to the next invoice.
+async function applyPendingCustomerCreditAndPersist(sql, invoice) {
+  const rows = await sql.query("SELECT record, position FROM app_records WHERE collection = 'checks' ORDER BY position NULLS LAST, record_key");
+  const checks = rows.map(row => row.record);
+  const beforeApplications = new Map(checks.map(check => [String(check.id), JSON.stringify(check.customerCredit?.applications || [])]));
+  const changed = applyPendingCustomerCreditsToInvoice(invoice, checks, checkCustomersMatch);
+  if (!changed) return false;
+  for (const row of rows) {
+    const key = String(row.record.id);
+    if (JSON.stringify(row.record.customerCredit?.applications || []) !== beforeApplications.get(key)) {
+      await saveRecord(sql, 'checks', row.record.id, row.record, row.position);
+    }
+  }
+  return true;
+}
+
+/**
+ * Deja constancia de quien entro. Si falla el registro el usuario entra igual:
+ * una metrica no puede dejar a nadie afuera.
+ */
+async function logPortalAccess(sql, user, entro) {
+  try {
+    const record = buildAccessRecord(user, entro);
+    await saveRecord(sql, 'portalAccessLog', record.id, record);
+  } catch { /* el acceso ya se concedio */ }
 }
 
 async function saveRecords(sql, collectionName, records) {
@@ -429,7 +464,7 @@ function reconciliationPageResult(page) {
 }
 
 async function pagedInvoices(sql, user, pagination) {
-  const assigned = Array.isArray(user.assignedClients) ? user.assignedClients.map(clientKey).filter(Boolean) : [];
+  const assigned = expandClientKeys(user.assignedClients, clientKey);
   const params = ['invoices'];
   const filters = ['collection = $1'];
   if (!(user.role === 'admin' && assigned.length === 0)) {
@@ -454,16 +489,7 @@ async function pagedInvoices(sql, user, pagination) {
 
 async function attachCheckApplications(sql, invoices) {
   const checks = await collection(sql, 'checks');
-  const byInvoice = new Map();
-  for (const check of checks) {
-    for (const allocation of check.allocations || []) {
-      const key = String(allocation.invoiceId);
-      const list = byInvoice.get(key) || [];
-      list.push({ date: String(check.date || '').slice(0, 10), amount: Number(allocation.amount || 0) });
-      byInvoice.set(key, list);
-    }
-  }
-  return invoices.map(invoice => ({ ...invoice, checkApplications: byInvoice.get(String(invoice.id)) || [] }));
+  return attachCheckCustomerCreditHistory(invoices, checks);
 }
 
 async function reconciliationInvoices(sql) {
@@ -800,6 +826,7 @@ async function processInvoiceSyncFile(env, sql, job, file) {
         const objectName = `${id}-invoice.pdf`;
         await putOracleObject(env, objectName, normalizedBytes);
         const invoice = { id, folio: extracted.folio, poNumber: extracted.poNumber || '', guideNumber: extracted.guideNumber || '', client: extracted.client, clientKey: clientKey(extracted.client), location: extracted.location || '', email: extracted.email || '', concept: extracted.concept || 'Factura (Auto-Sync)', searchText: extracted.searchText || '', issued: extracted.issued || new Date().toISOString().slice(0, 10), due: extracted.due || new Date(Date.now() + 2592000000).toISOString().slice(0, 10), amount: Number(extracted.amount), status: 'Pendiente', credits: [], creditAmount: 0, invoiceFileName: file.name, sourceSharePointPath: file.name, sourceSharePointFileId: file.id, invoicePdfPath: objectName, invoiceSharePointUrl: '', receivingFileName: '', receivingPdfPath: '', receivingSharePointUrl: '', sharePointStorage: { client: extracted.client, location: extracted.location || '', issued: extracted.issued, folio: extracted.folio } };
+        await applyPendingCustomerCreditAndPersist(sql, invoice);
         await saveRecord(sql, 'invoices', id, invoice, invoices.length);
         await graphRequest(env, `/drives/${job.driveId}/items/${encodeURIComponent(file.id)}`, { method: 'DELETE' });
         details.push({ file: file.name, type: 'invoice', status: 'processed', targets: [{ folio: invoice.folio, client: invoice.client }], reason: 'Factura registrada correctamente.' });
@@ -873,11 +900,17 @@ export async function tryDirectApi(request, env) {
       if (user) {
         if (!password && user.active !== false) return json({ requiresPassword: true });
         if (user.active === false || !(await bcrypt.compare(password, String(user.passwordHash || '')))) return json({ message: 'Usuario o contraseña incorrectos.' }, 401);
-        return json(await issueSession(user, env.JWT_SECRET));
+        const session = await issueSession(user, env.JWT_SECRET);
+        await logPortalAccess(sql, user, 'manual');
+        return json(session);
       }
       const [invoices, emailLog] = await Promise.all([collection(sql, 'invoices'), collection(sql, 'emailLog')]);
       const resolved = resolveEmailLogin({ users, invoices, emailLog }, normalized, clientKey);
-      if (resolved.kind === 'history') return json(await issueSession(resolved.user, env.JWT_SECRET));
+      if (resolved.kind === 'history') {
+        const session = await issueSession(resolved.user, env.JWT_SECRET);
+        await logPortalAccess(sql, resolved.user, 'historial');
+        return json(session);
+      }
       return json({ message: 'No hay acceso habilitado para este correo.' }, 401);
     } catch (error) {
       return json({ message: error?.message || 'No se pudo iniciar sesión.' }, 500);
@@ -938,7 +971,7 @@ export async function tryDirectApi(request, env) {
       return json(await pagedInvoices(sql, user, parseInvoicePagination(url)));
     }
     const invoices = await collection(sql, 'invoices');
-    const assigned = Array.isArray(user.assignedClients) ? user.assignedClients.map(clientKey).filter(Boolean) : [];
+    const assigned = expandClientKeys(user.assignedClients, clientKey);
     const visible = user.role === 'admin' && assigned.length === 0 ? invoices : invoices.filter(invoice => {
       const key = invoice.clientKey || clientKey(invoice.client);
       if (assigned.length) return assigned.includes(key);
@@ -991,19 +1024,24 @@ export async function tryDirectApi(request, env) {
     if (selected.some(invoice => !checkCustomersMatch(invoice.client, selectedClient))) return json({ message: 'Todas las facturas deben pertenecer al cliente seleccionado.' }, 400);
     const ordered = [...selected].sort((left, right) => String(left.due || left.issued || '').localeCompare(String(right.due || right.issued || '')));
     const available = ordered.reduce((sum, invoice) => sum + invoiceBalance(invoice), 0);
-    if (total > available + 0.01) return json({ message: `El cheque excede el saldo disponible de las facturas seleccionadas (${available.toFixed(2)}).` }, 400);
     const raw = Array.isArray(body?.allocations) ? body.allocations.map(item => ({ invoiceId: normalizeInvoiceId(item?.invoiceId), amount: Number(item?.amount) })).filter(item => item.invoiceId !== null && Number.isFinite(item.amount) && item.amount > 0) : [];
     let allocations = [];
     if (raw.length) {
       if (raw.some(item => !invoiceIds.includes(item.invoiceId))) return json({ message: 'El reparto incluye una factura que no está seleccionada.' }, 400);
-      if (Math.abs(raw.reduce((sum, item) => sum + item.amount, 0) - total) > 0.01) return json({ message: 'El reparto por factura no coincide con el total del cheque.' }, 400);
+      const allocated = raw.reduce((sum, item) => sum + item.amount, 0);
+      const overpayment = total - allocated;
+      if (overpayment < -0.01) return json({ message: 'El reparto por factura supera el total del cheque.' }, 400);
+      if (overpayment > 0.01 && (total <= available + 0.01 || Math.abs(allocated - available) > 0.01)) {
+        return json({ message: 'Para registrar un saldo a favor, aplica primero el saldo completo de las facturas seleccionadas.' }, 400);
+      }
+      if (overpayment <= 0.01 && Math.abs(allocated - total) > 0.01) return json({ message: 'El reparto por factura no coincide con el total del cheque.' }, 400);
       for (const item of raw) {
         const invoice = selected.find(candidate => invoiceIdMatches(candidate.id, item.invoiceId));
         if (item.amount > invoiceBalance(invoice) + 0.01) return json({ message: `El monto asignado a la factura ${invoice.folio} excede su saldo disponible (${invoiceBalance(invoice).toFixed(2)}).` }, 400);
       }
       allocations = applyCheckAllocations(allInvoices, raw);
     } else {
-      let remaining = total;
+      let remaining = Math.min(total, available);
       const planned = [];
       for (const invoice of ordered) {
         const amount = Math.min(remaining, invoiceBalance(invoice));
@@ -1013,9 +1051,24 @@ export async function tryDirectApi(request, env) {
       }
       allocations = applyCheckAllocations(allInvoices, planned);
     }
-    const check = { id: Date.now(), date, series, client: selectedClient, clientKey: clientKey(selectedClient), total: Number(total.toFixed(2)), allocations, createdAt: new Date().toISOString() };
-    await saveCheckWithInvoicesAtomically(sql, selected, check, checks.length);
-    return json({ message: `Cheque ${series} registrado correctamente.`, check }, 201);
+    const allocatedTotal = allocations.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const excess = Number(Math.max(0, total - allocatedTotal).toFixed(2));
+    if (excess > 0.01 && !allocations.length) return json({ message: 'Selecciona una factura para relacionar el saldo a favor del cliente.' }, 400);
+    const sourceAllocation = allocations[allocations.length - 1];
+    const check = {
+      id: Date.now(), date, series, client: selectedClient, clientKey: clientKey(selectedClient),
+      total: Number(total.toFixed(2)), allocations, createdAt: new Date().toISOString(),
+      ...(excess > 0.01 ? { customerCredit: { amount: excess, sourceInvoiceId: sourceAllocation.invoiceId, sourceFolio: sourceAllocation.folio, applications: [] } } : {}),
+    };
+    const creditInvoices = excess > 0.01 ? applyCustomerCreditToInvoices(allInvoices, check, checkCustomersMatch) : [];
+    const affectedIds = new Set([...allocations.map(item => String(item.invoiceId)), ...creditInvoices.map(item => String(item.id))]);
+    const affected = allInvoices.filter(invoice => affectedIds.has(String(invoice.id)));
+    await saveCheckWithInvoicesAtomically(sql, affected, check, checks.length);
+    const remainingCredit = checkCustomerCreditRemaining(check);
+    const message = remainingCredit > 0.01
+      ? `Cheque ${series} registrado. El excedente quedó como saldo a favor del cliente.`
+      : `Cheque ${series} registrado y el excedente se aplicó a facturas posteriores.`;
+    return json({ message, check }, 201);
   }
 
   if ((path === '/api/reconciliation/upload' || path === '/api/reconciliation/credits/upload') && request.method === 'POST') {
@@ -1098,12 +1151,17 @@ export async function tryDirectApi(request, env) {
     if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
     const [row, invoices, checks] = await Promise.all([recordByKey(sql, 'checks', checkMatch[1]), collection(sql, 'invoices'), collection(sql, 'checks')]);
     if (!row) return json({ message: 'El cheque no existe.' }, 404);
-    const needsWalmex = (row.record.allocations || []).some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'));
+    const needsWalmex = [...(row.record.allocations || []), ...(row.record.customerCredit?.applications || [])]
+      .some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'))
+      || String(row.record.customerCredit?.sourceInvoiceId || '').toLowerCase().startsWith('walmex-');
     const walmex = needsWalmex ? await loadWalmexInvoices(env.WALMEX_DATABASE_URL, checks) : [];
     const allInvoices = [...invoices, ...walmex];
     reverseCheckAllocations(allInvoices, row.record);
-    for (const allocation of row.record.allocations || []) {
-      const invoice = invoices.find(item => invoiceIdMatches(item.id, allocation.invoiceId));
+    const changedIds = new Set([
+      ...(row.record.allocations || []).map(item => String(item.invoiceId)),
+      ...(row.record.customerCredit?.applications || []).map(item => String(item.invoiceId)),
+    ]);
+    for (const invoice of invoices.filter(item => changedIds.has(String(item.id)))) {
       if (!invoice) continue;
       const invoiceRow = await recordByKey(sql, 'invoices', invoice.id);
       await saveRecord(sql, 'invoices', invoice.id, invoice, invoiceRow?.position ?? null);
@@ -1116,13 +1174,15 @@ export async function tryDirectApi(request, env) {
     if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
     const [row, invoices, checks] = await Promise.all([recordByKey(sql, 'checks', checkMatch[1]), collection(sql, 'invoices'), collection(sql, 'checks')]);
     if (!row) return json({ message: 'El cheque no existe.' }, 404);
+    if (row.record.customerCredit) return json({ message: 'Este cheque tiene saldo a favor relacionado. Para modificarlo, elimínalo primero; se restaurarán todas sus aplicaciones.' }, 409);
     const body = await request.json();
     const date = body?.date !== undefined ? String(body.date || '').trim() : row.record.date;
     const series = body?.series !== undefined ? String(body.series || '').trim() : row.record.series;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json({ message: 'La fecha del cheque no es válida.' }, 400);
     if (!series) return json({ message: 'Captura la serie o número del cheque.' }, 400);
     const allocations = (Array.isArray(body?.allocations) ? body.allocations : row.record.allocations || []).map(item => ({ invoiceId: normalizeInvoiceId(item.invoiceId), amount: Number(item.amount) })).filter(item => item.invoiceId !== null && Number.isFinite(item.amount) && item.amount > 0);
-    const needsWalmex = (row.record.allocations || []).some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'))
+    const needsWalmex = [...(row.record.allocations || []), ...(row.record.customerCredit?.applications || [])].some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'))
+      || String(row.record.customerCredit?.sourceInvoiceId || '').toLowerCase().startsWith('walmex-')
       || allocations.some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'));
     const walmex = needsWalmex ? await loadWalmexInvoices(env.WALMEX_DATABASE_URL, checks) : [];
     const allInvoices = [...invoices, ...walmex];
@@ -1283,6 +1343,21 @@ export async function tryDirectApi(request, env) {
       includedReceiving: !!entry.includedReceiving
     }));
     return json({ entries });
+  }
+
+  // Actividad del portal: quien entra y quien todavia no. Devuelve el resumen
+  // ya digerido, no las filas de la bitacora.
+  if (path === '/api/portal-activity' && request.method === 'GET') {
+    if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
+    const [accessLog, emailLog, invoices] = await Promise.all([
+      collection(sql, 'portalAccessLog'), collection(sql, 'emailLog'), collection(sql, 'invoices'),
+    ]);
+    return json(summarizeActivity({
+      accessLog, emailLog, invoices,
+      normalizeKey: clientKey,
+      from: String(url.searchParams.get('from') || '').trim(),
+      to: String(url.searchParams.get('to') || '').trim(),
+    }));
   }
 
   if (path === '/api/email-templates' && request.method === 'GET') {
@@ -1462,6 +1537,7 @@ export async function tryDirectApi(request, env) {
       if (invoiceBytes) await putOracleObject(env, invoicePdfPath, invoiceBytes);
       if (receivingBytes) await putOracleObject(env, receivingPdfPath, receivingBytes);
       const invoice = { id, folio: String(folio || generatedFolio).trim(), poNumber: String(poNumber || '').trim(), guideNumber: String(guideNumber || '').trim(), client: String(client).trim(), location, clientKey: clientKey(client), email: String(email).trim().toLowerCase(), concept: String(concept).trim(), searchText: extracted.searchText || '', issued, due, amount, status, invoiceFileName: invoiceFile?.name || '', receivingFileName: receivingFile?.name || '', invoicePdfPath, receivingPdfPath, invoiceSharePointUrl: '', receivingSharePointUrl: '', sharePointStorage: { client: String(client).trim(), location, issued, folio: String(folio || generatedFolio).trim() } };
+      await applyPendingCustomerCreditAndPersist(sql, invoice);
       await saveRecord(sql, 'invoices', id, invoice, invoices.length);
       return json(invoice, 201);
     } catch (error) {
@@ -1730,7 +1806,8 @@ export async function tryDirectApi(request, env) {
       const norm = String(key).toLowerCase();
       return Object.prototype.hasOwnProperty.call(values, norm) ? String(values[norm]) : match;
     });
-    const subject = fill(body?.subject).trim();
+     const subjectTemplate = String(body?.templateSubject || body?.subject || '').trim();
+     const subject = fill(subjectTemplate).trim();
     if (!subject) return json({ message: 'Captura el asunto del correo.' }, 400);
     const logo = String(body?.logo || '');
     const logoHtml = /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(logo) ? `<p style="margin:0 0 16px"><img src="${logo}" alt="" style="max-width:220px;height:auto"></p>` : '';
@@ -1740,9 +1817,11 @@ export async function tryDirectApi(request, env) {
     const issuer = invoiceIssuerKey(invoice);
     await sendGraphMail(env, { to, cc, subject, html, attachment: { name: `Devolucion-${String(body?.creditNumber || invoice.folio || invoice.id).replace(/[\/:*?"<>|]+/g, '-')}.pdf`, bytes }, from: senderForIssuer(env, issuer) });
     if (user.role === 'admin' && body?.saveTemplate) {
-      await upsertEmailTemplate(sql, String(body?.companyKey || '').trim(), {
-        subject, bodyHtml: String(body?.bodyHtml || ''), logo, updatedBy: user.email || ''
-      });
+       await upsertEmailTemplate(sql, String(body?.companyKey || '').trim(), {
+         // Keep template markers in storage. The resolved subject is only for
+         // this message; saving it would reuse old credit/invoice values.
+         subject: subjectTemplate, bodyHtml: String(body?.bodyHtml || ''), logo, updatedBy: user.email || ''
+       });
     }
     const creditLog = await collection(sql, 'emailLog');
     const creditEntry = { id: Date.now(), invoiceId: invoice.id, creditNumber: String(body?.creditNumber || ''), folio: invoice.folio || '', client: invoice.client || '', to, cc, sentAt: new Date().toISOString(), sentBy: user.email || '', sentByRole: user.role === 'admin' ? 'admin' : 'client' };
