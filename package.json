@@ -54,6 +54,8 @@
     "@progress/kendo-licensing": "^1.7.0",
     "@progress/kendo-theme-default": "^8.2.0",
     "@tinymce/tinymce-angular": "^9.1.1",
+    "ag-grid-community": "^31.3.4",
+    "apexcharts": "^3.54.1",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "concurrently": "^10.0.3",

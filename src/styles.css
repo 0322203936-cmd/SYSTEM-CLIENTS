@@ -3,34 +3,44 @@
 @import "@angular/material/prebuilt-themes/indigo-pink.css";
 @import "@progress/kendo-theme-default/dist/default-ocean-blue.css";
 
-/* Paleta del portal Procurant, usada por la vista de Facturas. */
+/* Colores de Pacifica Farms (azul marino, azul, crema, dorado, rojo y cafe). */
 :root {
-  --pc-navy-alt:    #114267;
-  --pc-green-light: #95cc50;
-  --pc-red:         #d50000;
-  --pc-red-warn:    #d0021b;
-  --pc-orange-dot:  #e9670e;
-  --pc-ink:         #212121;
-  --pc-label:       #424242;
-  --pc-hint:        #757575;
-  --pc-bar-bg:      #f6f6f6;
-  --pc-border:      #e0e0e0;
-  --pc-bg-alt:      #fafafa;
+  --pf-navy:        #074c73;
+  --pf-teal:        #0e5c7a;
+  --pf-cream:       #faf2e5;
+  --pf-gold:        #ffb84c;
+  --pf-red:         #e8321c;
+  --pf-brown:       #664935;
+  --pf-surface:     #fffdf9;
+  --pf-border:      #e4d8c5;
+  --pf-muted:       #796f66;
+  /* Paleta del portal Procurant (vista de Facturas), ahora con los colores de Pacifica. */
+  --pc-navy-alt:    var(--pf-navy);
+  --pc-green-light: #f2dfbd;
+  --pc-red:         var(--pf-red);
+  --pc-red-warn:    var(--pf-red);
+  --pc-orange-dot:  var(--pf-gold);
+  --pc-ink:         var(--pf-brown);
+  --pc-label:       var(--pf-navy);
+  --pc-hint:        var(--pf-muted);
+  --pc-bar-bg:      #f6efe3;
+  --pc-border:      var(--pf-border);
+  --pc-bg-alt:      var(--pf-surface);
   --pc-white:       #ffffff;
-  --k-header:       #045a66;
-  --k-header-rule:  #dedede;
-  --k-sorted:       #aed581;
-  --k-link:         #005fa4;
-  --k-hover:        #eaf5dc;
-  --k-alt:          #fafafa;
+  --k-header:       var(--pf-teal);
+  --k-header-rule:  var(--pf-gold);
+  --k-sorted:       #f2dfbd;
+  --k-link:         var(--pf-navy);
+  --k-hover:        #fff3df;
+  --k-alt:          var(--pf-surface);
 }
 
 * { box-sizing: border-box; }
-html, body { background: #fff; }
-body { margin: 0; color: #10251d; font-family: "Nunito Sans", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+html, body { background: var(--pf-cream); }
+body { margin: 0; color: var(--pf-navy); font-family: "Lora", Georgia, serif; -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-::selection { background: #bdebd6; color: #0d3d2d; }
+::selection { background: var(--pf-gold); color: var(--pf-navy); }
 
 /* Local layout primitives. These replace the former Tailwind utilities while
    Angular Material owns the interactive controls and form components. */
@@ -145,20 +155,20 @@ button { cursor: pointer; }
 [class~="rounded-xl"] { border-radius: .75rem; }
 [class~="rounded-2xl"] { border-radius: 1rem; }
 [class~="rounded-full"] { border-radius: 9999px; }
-[class~="border"] { border: 1px solid #dfe5e1; }
+[class~="border"] { border: 1px solid var(--pf-border); }
 [class~="border-b"] { border-bottom: 1px solid #e5e9e5; }
 [class~="border-t"] { border-top: 1px solid #e5e9e5; }
-[class~="bg-white"] { background: white; }
-[class~="bg-[#f7f8f5]"] { background: #f7f8f5; }
-[class~="bg-[#fbfcfa]/90"] { background: rgb(251 252 250 / .9); }
-[class~="bg-[#fafbf9]"] { background: #fafbf9; }
-[class~="bg-[#f1f3ef]"] { background: #f1f3ef; }
-[class~="bg-[#f4f6f2]"] { background: #f4f6f2; }
-[class~="bg-[#f5f7f3]"] { background: #f5f7f3; }
+[class~="bg-white"] { background: var(--pf-surface); }
+[class~="bg-[#f7f8f5]"] { background: #f7efe2; }
+[class~="bg-[#fbfcfa]/90"] { background: rgb(255 253 249 / .92); }
+[class~="bg-[#fafbf9]"] { background: #fffdf9; }
+[class~="bg-[#f1f3ef]"] { background: #f3ecdf; }
+[class~="bg-[#f4f6f2]"] { background: #f4ecdd; }
+[class~="bg-[#f5f7f3]"] { background: #f6efe3; }
 [class~="bg-[#0e2119]/60"] { background: rgb(14 33 25 / .6); }
-[class~="bg-[#123e2e]"] { background: #123e2e; }
-[class~="bg-[#183e30]"] { background: #183e30; }
-[class~="text-brand"] { color: #156b4b; }
+[class~="bg-[#123e2e]"] { background: var(--pf-navy); }
+[class~="bg-[#183e30]"] { background: var(--pf-teal); }
+[class~="text-brand"] { color: var(--pf-teal); }
 [class~="text-white"] { color: white; }
 [class~="text-red-700"] { color: #b91c1c; }
 [class~="text-[#7c867f]"] { color: #7c867f; }

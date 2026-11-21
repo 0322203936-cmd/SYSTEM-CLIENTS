@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
-import { AfterViewChecked, AfterViewInit, Component, computed, effect, ElementRef, HostListener, inject, OnDestroy, signal, ViewChild } from '@angular/core';
+import { AfterViewChecked, AfterViewInit, Component, computed, effect, ElementRef, HostListener, inject, NgZone, OnDestroy, signal, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -181,6 +181,19 @@ interface CreditRecord {
   creditSharePointUrl: string;
   creditFlagTargetInvoiceId?: number;
   creditFlagHidden?: boolean;
+  /** 'invoice' = el credito se aplico a esa factura (las demas solo comparten el documento). */
+  allocationType?: string;
+}
+
+/** Un renglon del reporte de creditos: una nota de credito, aunque cubra varias facturas. */
+interface CreditReportRow {
+  key: string;
+  invoice: Invoice;
+  credit: CreditRecord;
+  invoices: { invoice: Invoice; credit: CreditRecord }[];
+  invoiceFolios: string[];
+  poNumbers: string[];
+  guideNumbers: string[];
 }
 
 interface Invoice {
@@ -207,6 +220,9 @@ interface Invoice {
   creditAmount?: number;
   balance?: number;
   checkApplications?: { date: string; amount: number }[];
+  /** Saldo a favor del cliente (de un cheque que pago de mas) que todavia no se aplica. */
+  customerCreditBalance?: number;
+  customerCreditHistory?: { date?: string; amount?: number }[];
   credits?: CreditRecord[];
   reconciliationStatus?: string;
   walmexSource?: boolean;
@@ -402,6 +418,13 @@ interface CheckRecord {
   client: string;
   total: number;
   allocations: CheckAllocation[];
+  /** Lo que sobro del cheque: queda a favor del cliente y se aplica a sus facturas siguientes. */
+  customerCredit?: {
+    amount: number;
+    sourceInvoiceId?: number | string;
+    sourceFolio?: string;
+    applications?: CheckAllocation[];
+  };
   createdAt: string;
 }
 
@@ -428,6 +451,51 @@ interface ClientUser {
   permissions?: PortalPermission[];
   active: boolean;
   createdAt?: string;
+}
+
+/** Un acceso al portal (lo que devuelve /api/portal-activity en `logins`). */
+interface PortalActivityLogin {
+  at: string;
+  email?: string;
+}
+
+/** Un cliente (o una persona del equipo) en la actividad del portal. */
+interface PortalActivityRow {
+  clientKey?: string;
+  name?: string;
+  email?: string;
+  lastAt: string;
+  accesses: number;
+  addresses?: number;
+  activeDays: number;
+  logins: PortalActivityLogin[];
+}
+
+interface PortalActivityDay {
+  date: string;
+  count: number;
+}
+
+/** Resumen de /api/portal-activity (server/portal-activity.mjs). */
+interface PortalActivitySummary {
+  activeClients: number;
+  accesses: number;
+  eligibleClients: number;
+  coverage: number;
+  internalAccesses: number;
+  byDay: PortalActivityDay[];
+  byDayTeam: PortalActivityDay[];
+  clients: PortalActivityRow[];
+  team: PortalActivityRow[];
+  neverEntered?: unknown[];
+}
+
+type ActivityAudience = 'clients' | 'team';
+
+interface ActivityDetail {
+  title: string;
+  logins: PortalActivityLogin[];
+  total: number;
 }
 
 @Component({
@@ -470,6 +538,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   dashboardChartCanvasRef?: ElementRef<HTMLCanvasElement>;
   private readonly http = inject(HttpClient);
   private readonly sanitizer = inject(DomSanitizer);
+  /** AG Grid avisa de los clics fuera de Angular: se regresa a la zona para que la pantalla se actualice. */
+  private readonly zone = inject(NgZone);
   loginUser = '';
   language = signal<Language>((localStorage.getItem('fc-language') as Language) || 'en');
   loginPassword = '';
@@ -926,8 +996,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       const y = parseInt(issued.slice(0, 4), 10);
       const m = parseInt(issued.slice(5, 7), 10) - 1;
       if (y !== year || m < 0 || m > 11) continue;
-      const amount = Number(inv.amount || 0);
-      const balance = this.invoiceBalance(inv);
+      const amount = this.dashboardInvoiceAmount(inv);
+      const balance = this.dashboardInvoiceBalance(inv);
       months[m].count += 1;
       months[m].invoiced += amount;
       months[m].collected += balance;
@@ -960,8 +1030,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       const client = inv.client || '—';
       const key = `${monthIndex}::${client}`;
       const g = groups.get(key) || { client, monthIndex, amount: 0, collected: 0, count: 0 };
-      g.amount += Number(inv.amount || 0);
-      g.collected += this.invoiceBalance(inv);
+      g.amount += this.dashboardInvoiceAmount(inv);
+      g.collected += this.dashboardInvoiceBalance(inv);
       g.count += 1;
       groups.set(key, g);
     }
@@ -1226,10 +1296,13 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   accountStatementInvoices = computed(() => {
     const customers = this.statementCustomerFilter();
     const queryTerms = this.normalizeInvoiceSearch(this.search()).split(' ').filter(Boolean);
+    const matchingCustomerGroups = this.accountStatementCustomerQueryGroups(queryTerms);
     return [...this.invoices()]
       .filter(invoice => {
         const text = this.normalizeInvoiceSearch(`${invoice.folio} ${invoice.poNumber || ''} ${invoice.guideNumber || ''} ${invoice.client} ${invoice.concept} ${invoice.searchText || ''} ${invoice.amount}`);
-        const matchesSearch = !queryTerms.length || queryTerms.every(term => text.includes(term));
+        const groupKey = this.accountStatementCustomerGroupKey(invoice);
+        // Buscar un cliente por cualquiera de sus nombres trae todas sus facturas.
+        const matchesSearch = !queryTerms.length || matchingCustomerGroups.has(groupKey) || queryTerms.every(term => text.includes(term));
         const company = this.statementCompany();
         if (company !== 'all' && this.invoiceIssuerKey(invoice) !== company) return false;
         const agent = this.statementAgent();
@@ -1239,7 +1312,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         const to = this.statementDateTo();
         if (from && issued && issued < from) return false;
         if (to && issued && issued > to) return false;
-        return this.accountStatementBalance(invoice) > 0
+        // Un saldo a favor (negativo) tambien se muestra.
+        return Math.abs(this.accountStatementBalance(invoice)) > 0.01
           && this.accountStatementCustomerMatches(invoice, customers)
           && matchesSearch;
       })
@@ -1251,7 +1325,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const keys = new Set<string>();
     for (const invoice of this.invoices()) {
       if (!this.invoiceVisibleToUser(invoice, current)) continue;
-      if (this.accountStatementBalance(invoice) <= 0) continue;
+      if (Math.abs(this.accountStatementBalance(invoice)) <= 0.01) continue;
       keys.add(this.accountStatementCustomerGroupKey(invoice));
     }
     return keys.size;
@@ -1265,7 +1339,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const company = this.statementCompany();
     const agent = this.statementAgent();
     for (const invoice of this.invoices()) {
-      if (this.accountStatementBalance(invoice) <= 0) continue;
+      if (Math.abs(this.accountStatementBalance(invoice)) <= 0.01) continue;
       if (company !== 'all' && this.invoiceIssuerKey(invoice) !== company) continue;
       if (agent && !this.agentCoversInvoice(agent, invoice)) continue;
       const key = this.accountStatementCustomerGroupKey(invoice);
@@ -1298,7 +1372,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         groups.set(groupKey, group);
       }
       group.rows.push(row);
-      group.totals[row.agingBucket] += row.balance;
+      // El saldo a favor resta del total, pero no entra en las columnas de antiguedad.
+      if (row.balance > 0) group.totals[row.agingBucket] += row.balance;
       group.totals.balance += row.balance;
     }
     for (const group of groups.values()) {
@@ -1337,9 +1412,52 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   creditReportRows = computed(() => {
     const selectedCustomers = this.creditReportCustomerFilter();
     const queryTerms = this.normalizeInvoiceSearch(this.search()).split(' ').filter(Boolean);
-    return this.invoices().flatMap(invoice => (invoice.credits || []).map(credit => ({ invoice, credit })))
+    // Una nota de credito que cubre varias facturas sale en un solo renglon (mismo cliente, numero,
+    // fecha y tipo); su monto es la suma de lo aplicado a cada factura.
+    const rows = new Map<string, CreditReportRow>();
+    for (const invoice of this.invoices()) {
+      for (const credit of invoice.credits || []) {
+        const date = String(credit.date || credit.dateProcessed || '').slice(0, 10);
+        const document = String(credit.creditPdfPath || credit.creditSharePointUrl || '');
+        const creditId = String(credit.creditNumber || '').trim() || document;
+        const key = creditId
+          ? `${this.normalizeInvoiceSearch(invoice.client)}|${creditId}|${date}|${credit.documentOnly ? 'document' : 'applied'}`
+          : `${this.normalizeInvoiceSearch(invoice.client)}|invoice:${invoice.id}|${date}`;
+        let row = rows.get(key);
+        if (!row) {
+          row = { key, invoice, credit: { ...credit, amount: 0 }, invoices: [], invoiceFolios: [], poNumbers: [], guideNumbers: [] };
+          rows.set(key, row);
+        }
+        const amount = Number(row.credit.amount || 0) + Number(credit.amount || 0);
+        // La factura a la que se aplico el credito es la que representa al renglon.
+        if (credit.allocationType === 'invoice' && row.credit.allocationType !== 'invoice') {
+          row.invoice = invoice;
+          row.credit = { ...credit, amount };
+        } else {
+          row.credit.amount = amount;
+        }
+        row.invoices.push({ invoice, credit });
+        for (const [list, value] of [
+          [row.invoiceFolios, invoice.folio],
+          [row.poNumbers, invoice.poNumber],
+          [row.guideNumbers, credit.guideNumber || invoice.guideNumber],
+        ] as [string[], string | undefined][]) {
+          const text = String(value || '').trim();
+          if (text && !list.includes(text)) list.push(text);
+        }
+      }
+    }
+    return [...rows.values()]
       .filter(row => {
-        const searchable = this.normalizeInvoiceSearch(`${row.invoice.folio} ${row.invoice.poNumber || ''} ${row.invoice.guideNumber || ''} ${row.invoice.client} ${row.invoice.concept} ${row.invoice.searchText || ''} ${row.credit.creditNumber} ${row.credit.guideNumber || ''}`);
+        const searchable = this.normalizeInvoiceSearch([
+          row.invoice.client,
+          row.invoiceFolios.join(' '),
+          row.poNumbers.join(' '),
+          row.guideNumbers.join(' '),
+          row.invoice.concept,
+          row.invoice.searchText || '',
+          row.credit.creditNumber,
+        ].join(' '));
         return (!selectedCustomers.length || selectedCustomers.some(selected => this.customerMatches(row.invoice.client, selected)))
           && (!queryTerms.length || queryTerms.every(term => searchable.includes(term)));
       })
@@ -1347,7 +1465,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   });
   creditReportTotals = computed(() => {
     const rows = this.creditReportRows();
-    return { credits: rows.length, amount: rows.reduce((sum, row) => sum + Number(row.credit.amount || 0), 0), invoices: new Set(rows.map(row => row.invoice.id)).size };
+    return { credits: rows.length, amount: rows.reduce((sum, row) => sum + Number(row.credit.amount || 0), 0), invoices: new Set(rows.flatMap(row => row.invoices.map(item => item.invoice.id))).size };
   });
   creditReportCustomers = computed(() => Array.from(new Set(this.invoices().filter(invoice => (invoice.credits || []).length).map(invoice => this.customerDisplayName(invoice.client)))).sort((a, b) => a.localeCompare(b)));
   checkInvoices = computed(() => {
@@ -1369,6 +1487,16 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const amounts = this.checkInvoiceAmounts();
     return this.selectedCheckInvoiceIds().reduce<number>((sum, id) => sum + (Number(amounts[String(id)]) || 0), 0);
   });
+  /** Lo que todavia deben las facturas seleccionadas. */
+  checkSelectedAvailable = computed(() => {
+    const selected = new Set(this.selectedCheckInvoiceIds().map(String));
+    return this.checkInvoices()
+      .filter(invoice => selected.has(String(invoice.id)))
+      .reduce((sum, invoice) => sum + this.invoiceBalance(invoice), 0);
+  });
+  /** Las seleccionadas quedan pagadas por completo: lo que sobre del cheque se guarda como saldo a favor. */
+  checkSelectedFullyCovered = computed(() => this.checkSelectedAvailable() > 0.01
+    && this.checkSelectedBalance() + 0.01 >= this.checkSelectedAvailable());
   checkUnallocated = computed(() => Math.max(0, Number(this.checkTotal() || 0) - this.checkSelectedBalance()));
   checkOverAllocated = computed(() => Math.max(0, Number((this.checkSelectedBalance() - Number(this.checkTotal() || 0)).toFixed(2))));
   checkRequiredFieldsComplete = computed(() => Boolean(this.checkSeries().trim() && this.checkClient() && Number(this.checkTotal()) > 0));
@@ -2657,6 +2785,326 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   /** Registro de envios: se escribe desde siempre, ahora tambien se lee. */
   emailLogEntries = signal<{ invoiceId: number; creditNumber?: string; statementKey?: string; sentAt: string; to: string[]; includedReceiving: boolean }[]>([]);
 
+  /* ---------- Actividad del portal (solo administradores) ---------- */
+
+  portalActivity = signal<PortalActivitySummary | null>(null);
+  portalActivityLoading = signal(false);
+  portalActivityFrom = signal('');
+  portalActivityTo = signal('');
+
+  /** Abre la pestana de actividad; la primera vez muestra los ultimos 30 dias (hoy incluido). */
+  openPortalActivity() {
+    this.taskCenterTab.set('activity');
+    if (!this.portalActivityFrom()) {
+      const today = new Date();
+      const start = new Date(today.getTime() - 29 * 86_400_000);
+      this.portalActivityTo.set(App.localDayIso(today));
+      this.portalActivityFrom.set(App.localDayIso(start));
+    }
+    this.loadPortalActivity();
+  }
+
+  /** La fecha (YYYY-MM-DD) del dia local, no la de UTC. */
+  private static localDayIso(date: Date): string {
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+  }
+
+  loadPortalActivity() {
+    if (this.user()?.role !== 'admin') return;
+    this.portalActivityLoading.set(true);
+    const params = new URLSearchParams();
+    if (this.portalActivityFrom()) params.set('from', this.portalActivityFrom());
+    if (this.portalActivityTo()) params.set('to', this.portalActivityTo());
+    this.http.get<PortalActivitySummary>('/api/portal-activity?' + params.toString(), this.authOptions()).subscribe({
+      next: response => {
+        this.portalActivity.set(response);
+        this.portalActivityLoading.set(false);
+        this.activityDetail.set(null);
+        this.renderActivityWidgets().catch(() => this.portalActivityVendorError.set(true));
+      },
+      error: error => {
+        this.notify(this.errorMessage(error));
+        this.portalActivityLoading.set(false);
+      }
+    });
+  }
+
+  /** La tabla y la grafica vienen de librerias que se cargan aparte; si fallan, se avisa en la pantalla. */
+  portalActivityVendorError = signal(false);
+  activityAudience = signal<ActivityAudience>('clients');
+  activityDetail = signal<ActivityDetail | null>(null);
+
+  closeActivityDetail() {
+    this.activityDetail.set(null);
+  }
+
+  /** Detalle de los accesos de un renglon (clic en la tabla de AG Grid, que corre fuera de Angular). */
+  private openActivityDetail(row: PortalActivityRow | undefined) {
+    if (!row) return;
+    this.zone.run(() => this.activityDetail.set({
+      title: row.name || row.email || '',
+      logins: row.logins || [],
+      total: row.accesses || 0,
+    }));
+  }
+
+  setActivityAudience(audience: ActivityAudience) {
+    if (this.activityAudience() === audience) return;
+    this.activityAudience.set(audience);
+    this.activityDetail.set(null);
+    this.renderActivityWidgets().catch(() => this.portalActivityVendorError.set(true));
+  }
+
+  private activityGrid: any = null;
+  private activityChart: any = null;
+  private activityGridHost: HTMLElement | null = null;
+  private activityChartHost: HTMLElement | null = null;
+
+  /** Agrega una sola vez la hoja de estilos de una libreria (public/vendor). */
+  private loadVendorStyle(href: string) {
+    if (document.querySelector(`link[data-vendor="${href}"]`)) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.dataset['vendor'] = href;
+    link.onerror = () => this.portalActivityVendorError.set(true);
+    document.head.appendChild(link);
+  }
+
+  /** Espera (hasta 2 s) a que Angular pinte el contenedor. */
+  private waitForElement(id: string, attempt = 0): Promise<HTMLElement | null> {
+    const element = document.getElementById(id);
+    if (element) return Promise.resolve(element);
+    if (attempt >= 40) return Promise.resolve(null);
+    return new Promise(resolve => setTimeout(() => resolve(this.waitForElement(id, attempt + 1)), 50));
+  }
+
+  /** Pinta (o actualiza) la tabla de AG Grid y la grafica de ApexCharts con la actividad cargada. */
+  private async renderActivityWidgets() {
+    const data = this.portalActivity();
+    if (!data || this.taskCenterTab() !== 'activity') return;
+    this.loadVendorStyle('vendor/ag-grid/ag-grid.min.css');
+    this.loadVendorStyle('vendor/ag-grid/ag-theme-quartz.min.css');
+    this.loadVendorStyle('vendor/apexcharts/apexcharts.css');
+    const es = this.language() === 'es';
+    const [gridHost, chartHost] = await Promise.all([this.waitForElement('activityGrid'), this.waitForElement('activityChart')]);
+
+    // Si Angular volvio a crear los contenedores, las instancias viejas ya no sirven.
+    if (this.activityGridHost && this.activityGridHost !== gridHost) {
+      try { this.activityGrid?.destroy(); } catch { /* ya no existe */ }
+      this.activityGrid = null;
+    }
+    if (this.activityChartHost && this.activityChartHost !== chartHost) {
+      try { this.activityChart?.destroy(); } catch { /* ya no existe */ }
+      this.activityChart = null;
+    }
+    this.activityGridHost = gridHost;
+    this.activityChartHost = chartHost;
+
+    if (gridHost) {
+      const { createGrid } = await import('ag-grid-community');
+      const team = this.activityAudience() === 'team';
+      const columnDefs = team
+        ? [
+          { field: 'email', headerName: es ? 'Persona' : 'Person', flex: 2, minWidth: 240, filter: true, cellRenderer: this.activityNameCell },
+          { field: 'lastAt', headerName: es ? 'Último acceso' : 'Last login', flex: 1.2, minWidth: 150, valueFormatter: (params: any) => this.activityLastSeen(params.value) },
+          { field: 'accesses', headerName: es ? 'Accesos' : 'Logins', type: 'numericColumn', width: 120 },
+          { field: 'activeDays', headerName: es ? 'Días activos' : 'Active days', type: 'numericColumn', width: 140, cellClass: 'activity-days-cell' },
+        ]
+        : [
+          { field: 'name', headerName: es ? 'Cliente' : 'Customer', flex: 2, minWidth: 230, filter: true, cellRenderer: this.activityNameCell },
+          { field: 'lastAt', headerName: es ? 'Último acceso' : 'Last login', flex: 1.2, minWidth: 150, valueFormatter: (params: any) => this.activityLastSeen(params.value) },
+          { field: 'accesses', headerName: es ? 'Accesos' : 'Logins', type: 'numericColumn', width: 120 },
+          { field: 'addresses', headerName: es ? 'Correos' : 'Emails', type: 'numericColumn', width: 120 },
+          { field: 'activeDays', headerName: es ? 'Días activos' : 'Active days', type: 'numericColumn', width: 140, cellClass: 'activity-days-cell' },
+        ];
+      const rows = team ? data.team : data.clients;
+      const emptyText = team
+        ? (es ? 'Nadie del equipo ha entrado en este periodo.' : 'No one from the team logged in during this period.')
+        : (es ? 'Ningún cliente ha entrado en este periodo.' : 'No customer logged in during this period.');
+      if (this.activityGrid) {
+        this.activityGrid.setGridOption('columnDefs', columnDefs);
+        this.activityGrid.setGridOption('rowData', rows);
+        this.activityGrid.setGridOption('overlayNoRowsTemplate', `<span class="ag-overlay-no-rows-center">${emptyText}</span>`);
+        this.fitActivityGrid(gridHost, rows.length);
+      } else {
+        this.activityGrid = createGrid(gridHost, {
+          rowData: rows,
+          columnDefs: columnDefs as any,
+          defaultColDef: { sortable: true, resizable: true },
+          rowHeight: 48,
+          headerHeight: 40,
+          animateRows: true,
+          suppressCellFocus: true,
+          rowClass: 'activity-row-clickable',
+          onRowClicked: (event: any) => this.openActivityDetail(event.data),
+          overlayNoRowsTemplate: `<span class="ag-overlay-no-rows-center">${emptyText}</span>`,
+        });
+      }
+    }
+
+    if (chartHost) {
+      const apexModule: any = await import('apexcharts');
+      const ApexCharts = apexModule.default || apexModule;
+      const team = this.activityAudience() === 'team';
+      const days = team ? data.byDayTeam : data.byDay;
+      const seriesName = team ? (es ? 'Accesos del equipo' : 'Team logins') : (es ? 'Accesos de clientes' : 'Customer logins');
+      const categories = days.map(day => day.date);
+      const options = {
+        chart: { type: 'area', height: 210, toolbar: { show: false }, fontFamily: 'inherit' },
+        series: [{ name: seriesName, data: days.map(day => day.count) }],
+        xaxis: {
+          type: 'category',
+          categories,
+          tickAmount: Math.min(7, Math.max(categories.length - 1, 1)),
+          labels: {
+            rotate: 0,
+            hideOverlappingLabels: true,
+            style: { colors: '#7b8a84', fontSize: '11px' },
+            formatter: (value: string) => this.activityDayLabel(String(value)),
+          },
+          axisBorder: { show: false },
+          axisTicks: { show: false },
+        },
+        yaxis: { labels: { style: { colors: '#7b8a84', fontSize: '11px' } }, min: 0, forceNiceScale: true },
+        colors: ['#187c4a'],
+        stroke: { curve: 'smooth', width: 2 },
+        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.35, opacityTo: 0.02, stops: [0, 95] } },
+        dataLabels: { enabled: false },
+        grid: { borderColor: '#eef2f0', strokeDashArray: 3, padding: { left: 6, right: 10 } },
+        annotations: { xaxis: this.activityWeekendBands(days) },
+        tooltip: {
+          x: {
+            formatter: (value: string, opts: any) => this.activityDayLabel(String(
+              (opts?.w?.globals?.categoryLabels || opts?.w?.globals?.labels || [])[opts?.dataPointIndex ?? -1] ?? value
+            )),
+          },
+        },
+        noData: { text: es ? 'Todavía no hay accesos en este periodo.' : 'No logins in this period yet.' },
+      };
+      if (this.activityChart) {
+        await this.activityChart.updateOptions(options, false, false);
+      } else {
+        this.activityChart = new ApexCharts(chartHost, options);
+        await this.activityChart.render();
+      }
+    }
+  }
+
+  /** Alto de la tabla segun sus renglones (encabezado de 42 px y renglones de 48 px), entre 150 y 460 px. */
+  private fitActivityGrid(host: HTMLElement, rowCount: number) {
+    const height = 42 + 48 * Math.max(rowCount, 1) + 4;
+    host.style.height = Math.min(460, Math.max(150, height)) + 'px';
+  }
+
+  /** Iniciales para el circulo: de "Maria Lopez" sale "ML"; de un correo se usa lo de antes de la @. */
+  private activityInitials(value: string): string {
+    const words = String(value || '')
+      .replace(/@.*$/, '')
+      .replace(/[^\p{L}\p{N} ]/gu, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return words.length ? (words[0][0] + (words[1]?.[0] || '')).toUpperCase() : '?';
+  }
+
+  /** Que tan reciente fue el ultimo acceso: fresco (hasta 7 dias), tibio (hasta 30) o frio. */
+  private activityFreshness(lastAt: string): { text: string; state: 'fresh' | 'warm' | 'cold' } {
+    const es = this.language() === 'es';
+    if (!lastAt) return { text: es ? 'sin registro' : 'no record', state: 'cold' };
+    const last = new Date(lastAt);
+    if (Number.isNaN(last.getTime())) return { text: '', state: 'cold' };
+    const today = new Date(App.localDayIso(new Date()) + 'T12:00:00');
+    const lastDay = new Date(App.localDayIso(last) + 'T12:00:00');
+    const days = Math.round((today.getTime() - lastDay.getTime()) / 86_400_000);
+    if (days <= 0) return { text: es ? 'activo hoy' : 'active today', state: 'fresh' };
+    if (days === 1) return { text: es ? 'ayer' : 'yesterday', state: 'fresh' };
+    if (days <= 7) return { text: es ? `hace ${days} días` : `${days} days ago`, state: 'fresh' };
+    if (days <= 30) return { text: es ? `${days} días sin entrar` : `${days} days without logging in`, state: 'warm' };
+    return { text: es ? `${days} días sin entrar` : `${days} days without logging in`, state: 'cold' };
+  }
+
+  /** Celda de nombre en AG Grid: circulo con iniciales, nombre y que tan reciente fue su acceso. */
+  private activityNameCell = (params: any): string => {
+    const value = String(params.value || '');
+    const escape = (text: string) => text.replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>)[char] || char);
+    const freshness = this.activityFreshness(params.data?.lastAt || '');
+    return `<span class="activity-cell-client">
+      <span class="activity-avatar is-${freshness.state}">${escape(this.activityInitials(value))}</span>
+      <span class="activity-cell-main">
+        <span class="activity-cell-name">${escape(value)}</span>
+        <span class="activity-cell-state is-${freshness.state}">${escape(freshness.text)}</span>
+      </span>
+    </span>`;
+  };
+
+  /** Bandas grises en la grafica para los fines de semana (sabado y domingo seguidos). */
+  private activityWeekendBands(days: PortalActivityDay[]) {
+    const bands: { x: string; x2: string | null }[] = [];
+    let start: string | null = null;
+    let end: string | null = null;
+    for (const day of days) {
+      const weekday = new Date(day.date + 'T12:00:00').getDay();
+      if (weekday === 0 || weekday === 6) {
+        if (!start) start = day.date;
+        end = day.date;
+      } else if (start) {
+        bands.push({ x: start, x2: end });
+        start = null;
+      }
+    }
+    if (start) bands.push({ x: start, x2: end });
+    return bands.map(band => ({ ...band, fillColor: '#8a9a94', opacity: 0.09 }));
+  }
+
+  /** "pico: 14 nov, 9 accesos": el dia con mas accesos del periodo. */
+  activityPeakLabel = computed(() => {
+    const data = this.portalActivity();
+    if (!data) return '';
+    const days = this.activityAudience() === 'team' ? data.byDayTeam : data.byDay;
+    if (!days.length) return '';
+    const peak = days.reduce((best, day) => day.count > best.count ? day : best, days[0]);
+    if (!peak.count) return '';
+    const es = this.language() === 'es';
+    const one = peak.count === 1;
+    return (es ? 'pico: ' : 'peak: ') + this.activityDayLabel(peak.date) + ', ' + peak.count
+      + (es ? (one ? ' acceso' : ' accesos') : (one ? ' login' : ' logins'));
+  });
+
+  private destroyActivityWidgets() {
+    try { this.activityGrid?.destroy(); } catch { /* ya no existe */ }
+    try { this.activityChart?.destroy(); } catch { /* ya no existe */ }
+    this.activityGrid = null;
+    this.activityChart = null;
+    this.activityGridHost = null;
+    this.activityChartHost = null;
+  }
+
+  /** "2026-11-14" -> "14 nov" (o "Nov 14" en ingles), sin correrse de dia por la zona horaria. */
+  activityDayLabel(value: string): string {
+    const text = String(value ?? '');
+    const parts = text.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return text;
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    if (Number.isNaN(date.getTime())) return text;
+    return date.toLocaleDateString(this.language() === 'es' ? 'es-MX' : 'en-US', { day: 'numeric', month: 'short' });
+  }
+
+  /** "hoy, 9:15 a. m.", "ayer, ..." o "14 nov, ...". */
+  activityLastSeen(value: string): string {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const es = this.language() === 'es';
+    const time = date.toLocaleTimeString(es ? 'es-MX' : 'en-US', { hour: 'numeric', minute: '2-digit' });
+    const day = App.localDayIso(date);
+    const today = App.localDayIso(new Date());
+    const yesterday = App.localDayIso(new Date(Date.now() - 86_400_000));
+    if (day === today) return (es ? 'hoy, ' : 'today, ') + time;
+    if (day === yesterday) return (es ? 'ayer, ' : 'yesterday, ') + time;
+    return date.toLocaleDateString(es ? 'es-MX' : 'en-US', { day: 'numeric', month: 'short' }) + ', ' + time;
+  }
+
   loadEmailLog() {
     this.http.get<{ entries: { invoiceId: number; creditNumber?: string; statementKey?: string; sentAt: string; to: string[]; includedReceiving: boolean }[] }>('/api/email-log', this.authOptions()).subscribe({
       next: response => this.emailLogEntries.set(response.entries || []),
@@ -3374,6 +3822,18 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     };
   }
 
+  /**
+   * El asunto de la nota: el guardado solo sirve si trae {{credito}} y {{factura}};
+   * si no, se usa el de siempre (los asuntos viejos con {{cliente}} no decian de que factura era).
+   */
+  private creditSubjectTemplate(saved: string | undefined, spanish: boolean): string {
+    const subject = String(saved || '').trim();
+    const hasCredit = /\{\{\s*credito\s*\}\}/i.test(subject);
+    const hasInvoice = /\{\{\s*factura\s*\}\}/i.test(subject);
+    if (subject && hasCredit && hasInvoice) return subject;
+    return spanish ? 'Nota de devolución {{credito}} — {{factura}}' : 'Credit note {{credito}} — {{factura}}';
+  }
+
   /** Abre el cuadro para enviar la nota de devolución por correo. */
   openCreditEmailDialog(invoice: Invoice, credit: CreditRecord, event: Event) {
     event.stopPropagation();
@@ -3390,9 +3850,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     this.emailTemplateOrigin.set(creditTemplate ? 'company' : 'none');
     this.emailTo.set(this.user()?.role === 'admin' ? context.to : (this.user()?.email || ''));
     this.emailCc.set(this.user()?.role === 'admin' ? context.cc : '');
-    this.emailSubject.set(creditTemplate?.subject || (spanish
-      ? 'Nota de devolución {{credito}} — {{cliente}}'
-      : 'Return note {{credito}} — {{cliente}}'));
+    this.emailSubject.set(this.creditSubjectTemplate(creditTemplate?.subject, spanish));
     const body = creditTemplate?.bodyHtml || (spanish
       ? '<p>Estimado cliente,</p><p>Adjuntamos la nota de devolución <strong>{{credito}}</strong> por {{monto}}, correspondiente a la factura {{factura}}.</p><p>Quedamos atentos a cualquier consulta.</p><p>Saludos cordiales,<br>{{cliente}}</p>'
       : '<p>Dear customer,</p><p>Please find attached return note <strong>{{credito}}</strong> for {{monto}}, related to invoice {{factura}}.</p><p>We remain at your service.</p><p>Best regards</p>');
@@ -3472,6 +3930,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       logo: this.emailLogo(),
       placeholders: this.creditPlaceholderValues(invoice, credit),
       saveTemplate: this.emailSaveTemplate(),
+      // el asunto sin llenar ({{credito}} / {{factura}}), para que la plantilla guardada sirva para la siguiente nota
+      templateSubject: this.emailSubject(),
       companyKey: this.creditCompanyKey(this.invoiceIssuerKey(invoice)),
       creditNumber: credit.creditNumber || '',
       creditPath: credit.creditPdfPath || ''
@@ -3823,6 +4283,24 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       : Math.max(0, Number(invoice.balance ?? invoice.amount - (invoice.creditAmount || 0)));
   }
 
+  /** El saldo que se muestra: el saldo a favor del cliente lo puede dejar en negativo. */
+  invoiceDisplayBalance(invoice: Invoice) {
+    const balance = this.invoiceBalance(invoice);
+    const customerCredit = Math.max(0, Number(invoice.customerCreditBalance || 0));
+    return Number((balance - customerCredit).toFixed(2));
+  }
+
+  /** En el tablero Walmex se cuenta en dolares (sus facturas vienen en pesos). */
+  private dashboardInvoiceAmount(invoice: Invoice) {
+    const amount = Number(invoice.amount || 0);
+    return this.isWalmexInvoice(invoice) ? amount / 17.5 : amount;
+  }
+
+  private dashboardInvoiceBalance(invoice: Invoice) {
+    const balance = this.invoiceDisplayBalance(invoice);
+    return this.isWalmexInvoice(invoice) ? balance / 17.5 : balance;
+  }
+
   private accountStatementBalance(invoice: Invoice) {
     return accountStatementInvoiceBalance(invoice, this.statementDateTo());
   }
@@ -3917,6 +4395,26 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     return this.customerDisplayName(invoice.client || invoice.clientKey || '');
   }
 
+  /**
+   * Los clientes (por su llave de agrupacion) cuyo nombre, razon social o llave contiene todo lo buscado:
+   * buscar "dos gringos" encuentra tambien las facturas de "Gringo South SA de CV".
+   */
+  private accountStatementCustomerQueryGroups(queryTerms: string[]): Set<string> {
+    if (!queryTerms.length) return new Set();
+    const names = new Map<string, string>();
+    for (const invoice of this.invoices()) {
+      const key = this.accountStatementCustomerGroupKey(invoice);
+      const known = names.get(key) || '';
+      names.set(key, `${known} ${invoice.client || ''} ${invoice.clientKey || ''} ${this.accountStatementCustomerDisplayName(invoice)} ${key}`);
+    }
+    const matches = new Set<string>();
+    for (const [key, text] of names) {
+      const normalized = this.normalizeInvoiceSearch(text);
+      if (queryTerms.every(term => normalized.includes(term))) matches.add(key);
+    }
+    return matches;
+  }
+
   private accountStatementCustomerMatches(invoice: Invoice, selectedCustomers: string[]): boolean {
     if (!selectedCustomers.length) return true;
 
@@ -3938,7 +4436,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       customerName: invoice.client || '',
       daysExpiration,
       agingBucket,
-      bucketAmounts: { '0': agingBucket === '0' ? balance : 0, '1-30': agingBucket === '1-30' ? balance : 0, '31-60': agingBucket === '31-60' ? balance : 0, '61-90': agingBucket === '61-90' ? balance : 0, '90+': agingBucket === '90+' ? balance : 0 },
+      // un saldo a favor (negativo) no entra en ninguna columna de antiguedad
+      bucketAmounts: { '0': balance > 0 && agingBucket === '0' ? balance : 0, '1-30': balance > 0 && agingBucket === '1-30' ? balance : 0, '31-60': balance > 0 && agingBucket === '31-60' ? balance : 0, '61-90': balance > 0 && agingBucket === '61-90' ? balance : 0, '90+': balance > 0 && agingBucket === '90+' ? balance : 0 },
       balance
     };
   }
@@ -4440,7 +4939,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   }
 
   creditRowKey(row: any): string {
-    return row.invoice.id + '-' + row.credit.creditNumber;
+    return row.key || row.invoice.id + '-' + row.credit.creditNumber;
   }
 
   creditRowDate(row: any): string {
@@ -4458,9 +4957,9 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       if (to && d > to) return false;
       if (term) {
         const haystack = field === 'credit' ? String(row.credit.creditNumber || '')
-          : field === 'invoice' ? String(row.invoice.folio || '')
-          : field === 'po' ? String(row.invoice.poNumber || '')
-          : field === 'guide' ? String(row.credit.guideNumber || row.invoice.guideNumber || '')
+          : field === 'invoice' ? row.invoiceFolios.join(', ')
+          : field === 'po' ? row.poNumbers.join(', ')
+          : field === 'guide' ? row.guideNumbers.join(', ')
           : String(row.invoice.client || '');
         if (!haystack.toLowerCase().includes(term)) return false;
       }
@@ -4474,9 +4973,9 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       else if (key === 'date') cmp = this.creditRowDate(a).localeCompare(this.creditRowDate(b));
       else {
         const pick = (r: any) => key === 'credit' ? String(r.credit.creditNumber || '')
-          : key === 'invoice' ? String(r.invoice.folio || '')
-          : key === 'po' ? String(r.invoice.poNumber || '')
-          : key === 'guide' ? String(r.credit.guideNumber || r.invoice.guideNumber || '')
+          : key === 'invoice' ? r.invoiceFolios.join(', ')
+          : key === 'po' ? r.poNumbers.join(', ')
+          : key === 'guide' ? r.guideNumbers.join(', ')
           : String(r.invoice.client || '');
         cmp = pick(a).localeCompare(pick(b), 'es', { sensitivity: 'base' });
       }
@@ -4585,7 +5084,11 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   // Devuelve las asignaciones enriquecidas con PO, cliente y % del total.
   checkAllocationDetails(check: CheckRecord) {
     const total = Number(check.total) || 0;
-    return (check.allocations || []).map(a => {
+    // lo aplicado con el cheque y, despues, lo aplicado de su saldo a favor
+    return [
+      ...(check.allocations || []).map(a => ({ ...a, source: 'check' as const })),
+      ...(check.customerCredit?.applications || []).map(a => ({ ...a, source: 'credit' as const })),
+    ].map(a => {
       const invoice = this.invoices().find(inv => String(inv.id) === String(a.invoiceId));
       const amount = Number(a.amount) || 0;
       return {
@@ -4593,12 +5096,28 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         poNumber: invoice?.poNumber || '',
         amount,
         balance: invoice ? this.invoiceBalance(invoice) : null,
-        percent: total > 0 ? Math.round((amount / total) * 100) : 0
+        percent: total > 0 ? Math.round((amount / total) * 100) : 0,
+        source: a.source
       };
     });
   }
 
+  /** Lo que queda del saldo a favor del cheque, sin aplicar. */
+  checkCustomerCreditRemaining(check: CheckRecord): number {
+    const credit = check.customerCredit;
+    return credit
+      ? Math.max(0, Number((credit.amount - (credit.applications || []).reduce((sum, application) => sum + Number(application.amount || 0), 0)).toFixed(2)))
+      : 0;
+  }
+
   openCheckEditor(check: CheckRecord) {
+    // Editarlo romperia las aplicaciones del saldo a favor: hay que borrarlo (eso las regresa) y capturarlo de nuevo.
+    if (check.customerCredit) {
+      this.notify(this.language() === 'es'
+        ? 'Este cheque tiene saldo a favor y aplicaciones posteriores. Elimínalo para restaurar esos saldos y volver a registrarlo.'
+        : 'This check has customer credit and later applications. Delete it to restore those balances before registering it again.');
+      return;
+    }
     const allocations = (check.allocations || []).map(a => {
       const invoice = this.invoices().find(inv => String(inv.id) === String(a.invoiceId));
       return {
@@ -4932,8 +5451,9 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       this.notify(this.language() === 'es' ? 'Completa los datos del cheque y selecciona al menos una factura.' : 'Complete the check details and select at least one invoice.');
       return;
     }
-    if (this.checkUnallocated() > 0.01) {
-      this.notify(this.language() === 'es' ? 'El saldo de las facturas seleccionadas no cubre el total del cheque.' : 'The selected invoice balances do not cover the check total.');
+    // Si sobra dinero, solo se acepta cuando las seleccionadas quedan pagadas por completo (el resto es saldo a favor).
+    if (this.checkUnallocated() > 0.01 && !this.checkSelectedFullyCovered()) {
+      this.notify(this.language() === 'es' ? 'Para guardar el excedente como saldo a favor, aplica primero el saldo completo de las facturas seleccionadas.' : 'To save the excess as customer credit, first apply the full balance of the selected invoices.');
       return;
     }
     if (this.checkOverAllocated() > 0.01) {
@@ -5010,36 +5530,42 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       return acc;
     }, { '0': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0, balance: exportBalance } as Record<string, number>);
 
-    const TEAL_DARK = '0A5660';
-    const TEAL = '0E7079';
-    const TEAL_DEEP = '0B5E65';
-    const TEAL_TEXT = '387F86';
-    const TEAL_LIGHT_BG = 'F4FAF9';
-    const TEAL_HEADING_BG = 'E2F4F0';
-    const TEAL_TOTALS_BG = 'D4EDE8';
-    const BORDER_LIGHT = 'DAEAE7';
-    const INK = '182A30';
-    const BODY_INK = '243D44';
-    const LABEL_INK = '7A9EA6';
-    const OVERDUE = 'C0392B';
-    const WHITE = 'FFFFFF';
+    // Colores de Pacifica: azul marino, azul, crema y dorado; rojo para lo vencido y el saldo a favor.
+    const NAVY = '074C73';
+    const HEADER_BORDER = 'C8D9D5';
+    const BLUE = '0E5C7A';
+    const ROW_ALT_BG = 'FCFAF6';
+    const BORDER_LIGHT = 'EAE4D9';
+    const RED = 'E8321C';
+    const ROW_BG = 'FFFDF9';
+    const MUTED = '796F66';
+    const HEADER_BG = 'E6EFEC';
+    const CREAM = 'FAF2E5';
+    const BODY_INK = '29435B';
+    const HEADING_BG = 'F7F1E8';
+    const TOTALS_BG = 'F8F3E9';
 
     const thinBorder = { style: 'thin', color: { rgb: BORDER_LIGHT } };
     const cellBorder = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
 
-    const companyStyle = { font: { bold: true, sz: 20, color: { rgb: TEAL_DEEP } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
-    const titleStyle = { font: { sz: 12, color: { rgb: TEAL } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
-    const periodStyle = { font: { sz: 10, color: { rgb: TEAL_TEXT } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
-    const metaLabelStyle = { font: { bold: true, sz: 8, color: { rgb: LABEL_INK } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 } };
-    const metaValueStyle = { font: { bold: true, sz: 11, color: { rgb: INK } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 } };
-    const detailBalanceLabelStyle = { font: { bold: true, sz: 9, color: { rgb: TEAL_TEXT } }, alignment: { horizontal: 'left', vertical: 'bottom', wrapText: false, indent: 1 } };
-    const detailBalanceAmountStyle = { font: { bold: true, sz: 18, color: { rgb: TEAL_DEEP } }, alignment: { horizontal: 'left', vertical: 'top', wrapText: false, indent: 1 } };
-    const headerCellStyle = { font: { bold: true, sz: 9, color: { rgb: WHITE } }, fill: { fgColor: { rgb: TEAL } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border: { top: { style: 'thin', color: { rgb: TEAL_DARK } }, bottom: { style: 'thin', color: { rgb: TEAL_DARK } }, left: { style: 'thin', color: { rgb: TEAL_DARK } }, right: { style: 'thin', color: { rgb: TEAL_DARK } } } };
-    const bodyCellStyle = (alt: boolean, align: 'left' | 'center' | 'right' = 'center') => ({ font: { sz: 10, color: { rgb: BODY_INK } }, fill: { fgColor: { rgb: alt ? TEAL_LIGHT_BG : WHITE } }, alignment: { horizontal: align, vertical: 'center', wrapText: false }, border: cellBorder });
-    const overdueCellStyle = (alt: boolean) => ({ font: { sz: 10, bold: true, color: { rgb: OVERDUE } }, fill: { fgColor: { rgb: alt ? TEAL_LIGHT_BG : WHITE } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border: cellBorder });
-    const groupHeadingStyle = { font: { bold: true, sz: 11, color: { rgb: TEAL_DEEP } }, fill: { fgColor: { rgb: TEAL_HEADING_BG } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 }, border: { left: { style: 'medium', color: { rgb: TEAL } } } };
-    const totalsLabelStyle = { font: { bold: true, sz: 10.5, color: { rgb: TEAL_DEEP } }, fill: { fgColor: { rgb: TEAL_TOTALS_BG } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 }, border: { top: { style: 'medium', color: { rgb: TEAL } }, bottom: { style: 'medium', color: { rgb: TEAL } } } };
-    const totalsMoneyStyle = { font: { bold: true, sz: 10.5, color: { rgb: TEAL_DEEP } }, fill: { fgColor: { rgb: TEAL_TOTALS_BG } }, alignment: { horizontal: 'right', vertical: 'center', wrapText: false }, border: { top: { style: 'medium', color: { rgb: TEAL } }, bottom: { style: 'medium', color: { rgb: TEAL } } } };
+    const companyStyle = { font: { bold: true, sz: 20, color: { rgb: NAVY } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
+    const titleStyle = { font: { sz: 12, color: { rgb: BLUE } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
+    const periodStyle = { font: { sz: 10, color: { rgb: MUTED } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false } };
+    const metaLabelStyle = { font: { bold: true, sz: 8, color: { rgb: MUTED } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 } };
+    const metaValueStyle = { font: { bold: true, sz: 11, color: { rgb: NAVY } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 } };
+    const detailBalanceLabelStyle = { font: { bold: true, sz: 9, color: { rgb: BLUE } }, alignment: { horizontal: 'left', vertical: 'bottom', wrapText: false, indent: 1 } };
+    const detailBalanceAmountStyle = { font: { bold: true, sz: 18, color: { rgb: NAVY } }, alignment: { horizontal: 'left', vertical: 'top', wrapText: false, indent: 1 } };
+    const headerCellStyle = { font: { bold: true, sz: 9, color: { rgb: NAVY } }, fill: { fgColor: { rgb: HEADER_BG } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border: { top: { style: 'thin', color: { rgb: HEADER_BORDER } }, bottom: { style: 'thin', color: { rgb: HEADER_BORDER } }, left: { style: 'thin', color: { rgb: HEADER_BORDER } }, right: { style: 'thin', color: { rgb: HEADER_BORDER } } } };
+    /** La franja con el nombre de la empresa emisora (Pacifica / Centro). */
+    const issuerBandStyle = { font: { bold: true, sz: 10, color: { rgb: CREAM } }, fill: { fgColor: { rgb: BLUE } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border: { top: { style: 'thin', color: { rgb: BLUE } }, bottom: { style: 'thin', color: { rgb: BLUE } } } };
+    const bodyCellStyle = (alt: boolean, align: 'left' | 'center' | 'right' = 'center') => ({ font: { sz: 10, color: { rgb: BODY_INK } }, fill: { fgColor: { rgb: alt ? ROW_ALT_BG : ROW_BG } }, alignment: { horizontal: align, vertical: 'center', wrapText: false }, border: cellBorder });
+    const overdueCellStyle = (alt: boolean) => ({ font: { sz: 10, bold: true, color: { rgb: RED } }, fill: { fgColor: { rgb: alt ? ROW_ALT_BG : ROW_BG } }, alignment: { horizontal: 'center', vertical: 'center', wrapText: false }, border: cellBorder });
+    /** Un saldo a favor (negativo) en rojo. */
+    const creditMoneyStyle = (alt: boolean) => ({ font: { sz: 10, bold: true, color: { rgb: RED } }, fill: { fgColor: { rgb: alt ? ROW_ALT_BG : ROW_BG } }, alignment: { horizontal: 'right', vertical: 'center', wrapText: false }, border: cellBorder });
+    const groupHeadingStyle = { font: { bold: true, sz: 11, color: { rgb: NAVY } }, fill: { fgColor: { rgb: HEADING_BG } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 }, border: { left: { style: 'medium', color: { rgb: 'FFB84C' } } } };
+    const totalsLabelStyle = { font: { bold: true, sz: 10.5, color: { rgb: NAVY } }, fill: { fgColor: { rgb: TOTALS_BG } }, alignment: { horizontal: 'left', vertical: 'center', wrapText: false, indent: 1 }, border: { top: { style: 'thin', color: { rgb: 'FFB84C' } }, bottom: { style: 'thin', color: { rgb: BORDER_LIGHT } } } };
+    const totalsMoneyStyle = { font: { bold: true, sz: 10.5, color: { rgb: NAVY } }, fill: { fgColor: { rgb: TOTALS_BG } }, alignment: { horizontal: 'right', vertical: 'center', wrapText: false }, border: { top: { style: 'thin', color: { rgb: 'FFB84C' } }, bottom: { style: 'thin', color: { rgb: BORDER_LIGHT } } } };
+    const totalsCreditStyle = { ...totalsMoneyStyle, font: { ...totalsMoneyStyle.font, color: { rgb: RED } } };
 
     const setCell = (ws: any, r: number, c: number, v: string | number, style?: object, numFmt?: string) => {
       const ref = XLSXStyle.utils.encode_cell({ r, c });
@@ -5057,8 +5583,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       ws['!rows'][r] = { hpt };
     };
 
-    // Sheet 1: Estado de Cuenta
-    const detailCols = 10;
+    // Sheet 1: Estado de Cuenta (la ultima columna es el saldo de cada factura)
+    const detailCols = 11;
     const wsDetail: any = {};
     let r = 0;
     setCell(wsDetail, r, 0, this.statementHeaderCompany(), companyStyle); merge(wsDetail, r, 0, r, detailCols - 1); setRowHeight(wsDetail, r, 30); r++;
@@ -5067,18 +5593,18 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     setRowHeight(wsDetail, r, 8); r++;
     setCell(wsDetail, r, 0, (isSpanish ? 'Cliente' : 'Customer').toUpperCase(), metaLabelStyle); merge(wsDetail, r, 0, r, 2);
     setCell(wsDetail, r, 3, (isSpanish ? 'Generado' : 'Generated').toUpperCase(), metaLabelStyle); merge(wsDetail, r, 3, r, 5);
-    setCell(wsDetail, r, 6, (isSpanish ? 'Moneda' : 'Currency').toUpperCase(), metaLabelStyle); merge(wsDetail, r, 6, r, 9); setRowHeight(wsDetail, r, 14); r++;
+    setCell(wsDetail, r, 6, (isSpanish ? 'Moneda' : 'Currency').toUpperCase(), metaLabelStyle); merge(wsDetail, r, 6, r, detailCols - 1); setRowHeight(wsDetail, r, 14); r++;
     setCell(wsDetail, r, 0, customer, metaValueStyle); merge(wsDetail, r, 0, r, 2);
     setCell(wsDetail, r, 3, generatedAt, metaValueStyle); merge(wsDetail, r, 3, r, 5);
-    setCell(wsDetail, r, 6, 'USD', metaValueStyle); merge(wsDetail, r, 6, r, 9); setRowHeight(wsDetail, r, 20); r++;
+    setCell(wsDetail, r, 6, 'USD', metaValueStyle); merge(wsDetail, r, 6, r, detailCols - 1); setRowHeight(wsDetail, r, 20); r++;
     setRowHeight(wsDetail, r, 8); r++;
     setCell(wsDetail, r, 0, (isSpanish ? 'Saldo pendiente' : 'Outstanding balance').toUpperCase(), detailBalanceLabelStyle); merge(wsDetail, r, 0, r, detailCols - 1); setRowHeight(wsDetail, r, 16); r++;
     setCell(wsDetail, r, 0, exportBalance, detailBalanceAmountStyle, moneyFormat); merge(wsDetail, r, 0, r, detailCols - 1); setRowHeight(wsDetail, r, 28); r++;
     setRowHeight(wsDetail, r, 10); r++;
 
     const agingHeaders = isSpanish
-      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días de vencimiento', '0 días', '1-30 días', '31-60 días', '61-90 días', 'Más de 90 días']
-      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days expiration', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90 more days'];
+      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días de vencimiento', '0 días', '1-30 días', '31-60 días', '61-90 días', 'Más de 90 días', 'Total']
+      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days expiration', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90 more days', 'Total'];
     agingHeaders.forEach((header, c) => setCell(wsDetail, r, c, header, headerCellStyle));
     setRowHeight(wsDetail, r, 22); r++;
 
@@ -5091,6 +5617,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       (['0', '1-30', '31-60', '61-90', '90+'] as const).forEach((bucket, i) => {
         setCell(wsDetail, row, 5 + i, t[bucket] || '', totalsMoneyStyle, t[bucket] ? moneyFormat : undefined);
       });
+      setCell(wsDetail, row, 10, t['balance'] || '', t['balance'] < 0 ? totalsCreditStyle : totalsMoneyStyle, t['balance'] ? moneyFormat : undefined);
       setRowHeight(wsDetail, row, 20);
       return row + 1;
     };
@@ -5100,7 +5627,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       const issuer = groupIssuer(group);
       if (showIssuerBands && issuer !== detailIssuer) {
         if (detailIssuer !== null) { r = closeDetailIssuer(detailIssuer, r); setRowHeight(wsDetail, r, 10); r++; }
-        for (let c = 0; c < detailCols; c++) setCell(wsDetail, r, c, c === 0 ? this.issuerName(issuer) : '', headerCellStyle);
+        for (let c = 0; c < detailCols; c++) setCell(wsDetail, r, c, c === 0 ? this.issuerName(issuer) : '', issuerBandStyle);
         merge(wsDetail, r, 0, r, detailCols - 1); setRowHeight(wsDetail, r, 22); r++;
         detailIssuer = issuer;
       }
@@ -5117,6 +5644,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
           const amount = row.bucketAmounts[bucket];
           setCell(wsDetail, r, 5 + i, amount || '', bodyCellStyle(alt, 'right'), amount ? moneyFormat : undefined);
         });
+        setCell(wsDetail, r, 10, row.balance || '', row.balance < 0 ? creditMoneyStyle(alt) : bodyCellStyle(alt, 'right'), row.balance ? moneyFormat : undefined);
         setRowHeight(wsDetail, r, 18); r++;
       });
       for (let c = 0; c <= 4; c++) {
@@ -5127,6 +5655,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         const amount = group.totals[bucket];
         setCell(wsDetail, r, 5 + i, amount || '', totalsMoneyStyle, amount ? moneyFormat : undefined);
       });
+      setCell(wsDetail, r, 10, group.totals.balance || '', group.totals.balance < 0 ? totalsCreditStyle : totalsMoneyStyle, group.totals.balance ? moneyFormat : undefined);
       setRowHeight(wsDetail, r, 20); r++;
       if (group.rows.length && this.isWalmexInvoice(group.rows[0].invoice)) {
         for (let c = 0; c <= 4; c++) {
@@ -5137,12 +5666,14 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
           const amount = this.walmexPesosToDollars(group.totals[bucket]);
           setCell(wsDetail, r, 5 + i, amount || '', totalsMoneyStyle, amount ? moneyFormat : undefined);
         });
+        const balanceDollars = this.walmexPesosToDollars(group.totals.balance);
+        setCell(wsDetail, r, 10, balanceDollars || '', balanceDollars < 0 ? totalsCreditStyle : totalsMoneyStyle, balanceDollars ? moneyFormat : undefined);
         setRowHeight(wsDetail, r, 20); r++;
       }
     }
     if (showIssuerBands && detailIssuer !== null) r = closeDetailIssuer(detailIssuer, r);
     wsDetail['!ref'] = XLSXStyle.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: detailCols - 1 } });
-    wsDetail['!cols'] = [{ wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 11 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }];
+    wsDetail['!cols'] = [{ wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 11 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 }];
 
     // Sheet 2: Resumen
     const summaryCols = 7;
@@ -5195,7 +5726,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         const amount = row.group.totals[bucket];
         setCell(wsSummary, s, 1 + i, amount || '', bodyCellStyle(alt, 'right'), amount ? moneyFormat : undefined);
       });
-      setCell(wsSummary, s, 6, row.group.totals.balance, bodyCellStyle(alt, 'right'), moneyFormat);
+      setCell(wsSummary, s, 6, row.group.totals.balance, row.group.totals.balance < 0 ? creditMoneyStyle(alt) : bodyCellStyle(alt, 'right'), moneyFormat);
       setRowHeight(wsSummary, s, 18); s++;
       if (row.group.rows.length && this.isWalmexInvoice(row.group.rows[0].invoice)) {
         setCell(wsSummary, s, 0, 'Customer totals DLLS', totalsLabelStyle);
@@ -5436,9 +5967,9 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const isSpanish = this.language() === 'es';
 
     const headers = isSpanish
-      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días venc.', '0 días', '1-30 días', '31-60 días', '61-90 días', '+90 días']
-      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days exp.', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90+ Days'];
-    const widths = [88, 88, 120, 78, 74, 76, 84, 84, 84, 76];
+      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días venc.', '0 días', '1-30 días', '31-60 días', '61-90 días', '+90 días', 'Total']
+      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days exp.', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90+ Days', 'Total'];
+    const widths = [88, 88, 120, 78, 74, 76, 84, 84, 84, 76, 90];
     const tableWidth = widths.reduce((sum, w) => sum + w, 0);
 
     const pad = 14;
@@ -5481,7 +6012,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     ctx.fillText(group.customerName, pad, y + titleH / 2);
     y += titleH;
 
-    ctx.fillStyle = MUTED;
+    ctx.fillStyle = group.totals.balance < 0 ? OVERDUE : MUTED;
     ctx.font = '11px ' + FONT;
     const subtitle = this.groupIssuerName(group) + '  ·  '
       + group.rows.length + ' ' + (isSpanish ? 'facturas abiertas' : 'open invoices')
@@ -5525,13 +6056,15 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         row.bucketAmounts['1-30'] ? this.formatMoney(row.bucketAmounts['1-30']) : '',
         row.bucketAmounts['31-60'] ? this.formatMoney(row.bucketAmounts['31-60']) : '',
         row.bucketAmounts['61-90'] ? this.formatMoney(row.bucketAmounts['61-90']) : '',
-        row.bucketAmounts['90+'] ? this.formatMoney(row.bucketAmounts['90+']) : ''
+        row.bucketAmounts['90+'] ? this.formatMoney(row.bucketAmounts['90+']) : '',
+        this.formatMoney(row.balance)
       ];
       x = pad;
       cells.forEach((text, i) => {
         if (text) {
-          ctx.fillStyle = i === 4 && row.daysExpiration > 0 ? OVERDUE : INK;
-          ctx.font = (i === 4 && row.daysExpiration > 0 ? '700 11px ' : '11px ') + FONT;
+          // en rojo y negritas: los dias vencidos y un saldo a favor
+          ctx.fillStyle = (i === 10 && row.balance < 0) || (i === 4 && row.daysExpiration > 0) ? OVERDUE : INK;
+          ctx.font = ((i === 10 && row.balance < 0) || (i === 4 && row.daysExpiration > 0) ? '700 11px ' : '11px ') + FONT;
           ctx.textAlign = i >= 5 ? 'right' : 'left';
           const tx = i >= 5 ? x + widths[i] - 6 : x + 6;
           ctx.fillText(this.fitCanvasText(ctx, text, widths[i] - 12), tx, y + rowH / 2);
@@ -5546,7 +6079,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     // totales
     ctx.fillStyle = TOTALS_BG;
     ctx.fillRect(pad, y, tableWidth, totalsH);
-    ctx.fillStyle = TOTALS_INK;
+    ctx.fillStyle = group.totals.balance < 0 ? OVERDUE : TOTALS_INK;
     ctx.fillRect(pad, y, tableWidth, 1.5);
     ctx.font = '700 11px ' + FONT;
     ctx.textAlign = 'left';
@@ -5560,6 +6093,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       }
       x += widths[5 + i];
     });
+    ctx.textAlign = 'right';
+    ctx.fillText(this.formatMoney(group.totals.balance), x + widths[10] - 6, y + totalsH / 2);
 
     return canvas.toDataURL('image/png');
   }
@@ -5585,10 +6120,11 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const BODY_INK = '243D44';
     const ALT_BG = 'F4FAF9';
     const TOTALS_BG = 'D4EDE8';
+    const CREDIT_RED = 'C0392B';
 
     const headers = isSpanish
-      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días de vencimiento', '0 días', '1-30 días', '31-60 días', '61-90 días', 'Más de 90 días']
-      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days expiration', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90 more days'];
+      ? ['Vencimiento', 'Fecha', 'Números PO', 'Factura', 'Días de vencimiento', '0 días', '1-30 días', '31-60 días', '61-90 días', 'Más de 90 días', 'Total']
+      : ['Expiration', 'Date', 'PO Numbers', 'Invoice', 'Days expiration', '0 Days', '1-30 Days', '31-60 Days', '61-90 Days', '90 more days', 'Total'];
 
     const data: any[][] = [];
     // la empresa sale de las facturas del cliente, no del filtro activo:
@@ -5609,13 +6145,14 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         row.bucketAmounts['1-30'] || '',
         row.bucketAmounts['31-60'] || '',
         row.bucketAmounts['61-90'] || '',
-        row.bucketAmounts['90+'] || ''
+        row.bucketAmounts['90+'] || '',
+        row.balance || ''
       ]);
     }
     data.push([
       isSpanish ? 'Totales del cliente' : 'Customer totals', '', '', '', '',
       group.totals['0'] || '', group.totals['1-30'] || '', group.totals['31-60'] || '',
-      group.totals['61-90'] || '', group.totals['90+'] || ''
+      group.totals['61-90'] || '', group.totals['90+'] || '', group.totals.balance || ''
     ]);
 
     const ws = XLSXStyle.utils.aoa_to_sheet(data);
@@ -5641,6 +6178,8 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
         const ref = at(r, c);
         if (!ws[ref]) continue;
         ws[ref].s = { font: { sz: 10, color: { rgb: BODY_INK } }, fill: { fgColor: { rgb: alt ? ALT_BG : WHITE } }, alignment: { horizontal: c >= 5 ? 'right' : 'left', vertical: 'center' } };
+        // un saldo a favor (negativo) en rojo
+        if (c === 10 && typeof ws[ref].v === 'number' && ws[ref].v < 0) ws[ref].s.font = { sz: 10, bold: true, color: { rgb: CREDIT_RED } };
         if (c >= 5 && typeof ws[ref].v === 'number') ws[ref].z = moneyFormat;
       }
     }
@@ -5648,13 +6187,14 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
       const ref = at(totalsRow, c);
       if (!ws[ref]) continue;
       ws[ref].s = { font: { bold: true, sz: 10.5, color: { rgb: TEAL_DEEP } }, fill: { fgColor: { rgb: TOTALS_BG } }, alignment: { horizontal: c >= 5 ? 'right' : 'left', vertical: 'center' } };
+      if (c === 10 && typeof ws[ref].v === 'number' && ws[ref].v < 0) ws[ref].s.font = { bold: true, sz: 10.5, color: { rgb: CREDIT_RED } };
       if (c >= 5 && typeof ws[ref].v === 'number') ws[ref].z = moneyFormat;
     }
-    ws['!cols'] = [{ wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 11 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }];
+    ws['!cols'] = [{ wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 11 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 14 }];
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 9 } },
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 10 } },
       { s: { r: totalsRow, c: 0 }, e: { r: totalsRow, c: 4 } }
     ];
 

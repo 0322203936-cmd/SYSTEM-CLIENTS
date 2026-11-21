@@ -5,8 +5,19 @@ La computadora desde donde se publicaba el Worker `pacifica-farms-portal` ya no 
 ## `pagina/`: la página tal como está publicada (ya compilada)
 
 - Es una copia exacta de los archivos que sirve el portal: `index.html`, `main…js`, los chunks `8/550/849/913…js`, `runtime…js`, estilos, fuentes, imágenes y `tinymce/` (272 archivos, idénticos a tinymce 8.9.0).
-- **Ojo:** el código de `src/` de este repositorio **NO** tiene todo lo de esta página. Las pantallas de saldo a favor de cheques y de actividad del portal solo existen aquí, ya compiladas. Si se compila `src/` (`ng build`) y se publica eso, esas pantallas desaparecen.
-- Mientras `src/` no se ponga al día, para publicar hay que usar esta carpeta como los archivos estáticos (assets) del Worker.
+- Se guarda como referencia de lo que estaba publicado el 21 nov 2026.
+
+### `src/` ya está al día (21 nov 2026)
+
+El código de `src/` se reconstruyó a partir de esta página (no traía mapa de código, solo lo compilado):
+pantalla de actividad del portal (AG Grid 31.3.4 + ApexCharts 3.54.1), saldo a favor de cheques y del estado de
+cuenta, notas de crédito con varias facturas, colores de Pacifica (login, Excel/PDF del estado de cuenta, tema
+global) y los módulos `email-template-keys.ts`, `bulk-send.ts` y `bulk-statement.ts`, que nunca se habían subido.
+
+Comprobado: `ng build --configuration production` da los mismos archivos que esta carpeta. `styles`, `runtime`,
+los chunks `8/550/849/913`, las imágenes y `tinymce/` salen idénticos byte por byte; `main…js` tiene los mismos
+616,357 tokens sin ninguna diferencia de contenido (solo cambian los nombres cortos que elige el minificador, que
+dependen de cómo estaban escritas las variables en el código original). Ya se puede compilar `src/` y publicar.
 
 ## API (`worker/` y `server/`)
 
