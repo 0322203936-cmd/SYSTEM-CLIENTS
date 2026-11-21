@@ -1,5 +1,7 @@
 import 'dotenv/config';
-import { resolveEmailLogin, historyInvoiceAccess, canSendEmailForInvoice, canSendStatementForCustomer, resolveEmailDeliveryRecipients } from './email-login.mjs';
+import { resolveEmailLogin, historyInvoiceAccess, canSendEmailForInvoice, canSendStatementForCustomer, resolveEmailDeliveryRecipients, expandClientKeys } from './email-login.mjs';
+import { buildAccessRecord, summarizeActivity } from './portal-activity.mjs';
+import { applyCustomerCreditToInvoices, applyPendingCustomerCreditsToInvoice, attachCheckCustomerCreditHistory, checkCustomerCreditRemaining } from './check-customer-credit.mjs';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -232,6 +234,7 @@ async function readDb() {
   if (!Array.isArray(db.notifications)) { db.notifications = []; changed = true; }
   if (!Array.isArray(db.emailTemplates)) { db.emailTemplates = []; changed = true; }
   if (!Array.isArray(db.emailLog)) { db.emailLog = []; changed = true; }
+  if (!Array.isArray(db.portalAccessLog)) { db.portalAccessLog = []; changed = true; }
   for (const user of db.users || []) {
     if (user.role === 'client' && !user.clientKey) { user.clientKey = normalizeClientKey(user.name); changed = true; }
   }
@@ -1176,12 +1179,45 @@ app.post('/api/auth/login', async (req, res, next) => {
     if (!username) return res.status(400).json({ message: 'Ingresa tu correo.' });
     const db = await readDb();
     const resolved = resolveEmailLogin(db, username, normalizeClientKey);
-    if (resolved.kind === 'history') return res.json(issueUserSession(resolved.user));
+    if (resolved.kind === 'history') {
+      const session = issueUserSession(resolved.user);
+      await logPortalAccess(db, resolved.user, 'historial');
+      return res.json(session);
+    }
     if (resolved.kind === 'denied') return res.status(401).json({ message: 'No hay acceso habilitado para este correo.' });
     const user = resolved.user;
     if (!password && user.active !== false) return res.json({ requiresPassword: true });
     if (!user || user.active === false || !(await bcrypt.compare(String(password), user.passwordHash))) return res.status(401).json({ message: 'Usuario o contraseña incorrectos.' });
-    res.json(issueUserSession(user));
+    const session = issueUserSession(user);
+    await logPortalAccess(db, user, 'manual');
+    res.json(session);
+  } catch (error) { next(error); }
+});
+
+/**
+ * Deja constancia de quien entro (misma bitacora que el Worker: portalAccessLog).
+ * Si falla el registro el usuario entra igual: una metrica no puede dejar a nadie afuera.
+ */
+async function logPortalAccess(db, user, entro) {
+  try {
+    db.portalAccessLog = Array.isArray(db.portalAccessLog) ? db.portalAccessLog : [];
+    db.portalAccessLog.push(buildAccessRecord(user, entro));
+    await writeDb(db);
+  } catch { /* el acceso ya se concedio */ }
+}
+
+// Actividad del portal: quien entra y quien todavia no. Devuelve el resumen ya digerido.
+app.get('/api/portal-activity', authenticate, adminOnly, async (req, res, next) => {
+  try {
+    const db = await readDb();
+    res.json(summarizeActivity({
+      accessLog: db.portalAccessLog || [],
+      emailLog: db.emailLog || [],
+      invoices: db.invoices || [],
+      normalizeKey: normalizeClientKey,
+      from: String(req.query.from || '').trim(),
+      to: String(req.query.to || '').trim(),
+    }));
   } catch (error) { next(error); }
 });
 
@@ -1370,7 +1406,7 @@ app.delete('/api/notifications/:id', authenticate, async (req, res, next) => {
 app.get('/api/invoices', authenticate, async (req, res, next) => {
   try {
     const db = await readDb();
-    const assignedKeys = Array.isArray(req.user.assignedClients) ? req.user.assignedClients.map(normalizeClientKey).filter(Boolean) : [];
+    const assignedKeys = expandClientKeys(req.user.assignedClients, normalizeClientKey);
     const invoices = req.user.role === 'admin' && assignedKeys.length === 0 ? db.invoices : db.invoices.filter(item => {
       const invoiceKey = item.clientKey || normalizeClientKey(item.client);
       if (assignedKeys.length > 0) return assignedKeys.includes(invoiceKey);
@@ -1378,17 +1414,7 @@ app.get('/api/invoices', authenticate, async (req, res, next) => {
     });
     const walmexAllowed = req.user.role === 'admin' || assignedKeys.includes('walmex') || req.user.clientKey === 'walmex';
     const walmex = walmexAllowed ? await loadWalmexInvoices(process.env.WALMEX_DATABASE_URL, db.checks || []) : [];
-    const checksByInvoice = new Map();
-    for (const check of db.checks || []) {
-      for (const allocation of check.allocations || []) {
-        const key = String(allocation.invoiceId);
-        const list = checksByInvoice.get(key) || [];
-        list.push({ date: String(check.date || '').slice(0, 10), amount: Number(allocation.amount || 0) });
-        checksByInvoice.set(key, list);
-      }
-    }
-    const withCheckHistory = item => ({ ...item, checkApplications: checksByInvoice.get(String(item.id)) || [] });
-    res.json([...invoices, ...walmex].map(withCheckHistory).sort((a, b) => String(b.issued || b.id || '').localeCompare(String(a.issued || a.id || ''))));
+    res.json(attachCheckCustomerCreditHistory([...invoices, ...walmex], db.checks || []).sort((a, b) => String(b.issued || b.id || '').localeCompare(String(a.issued || a.id || ''))));
   } catch (error) { next(error); }
 });
 
@@ -1465,7 +1491,6 @@ app.post('/api/checks', authenticate, adminOnly, async (req, res, next) => {
 
     const orderedInvoices = [...selectedInvoices].sort((a, b) => String(a.due || a.issued || '').localeCompare(String(b.due || b.issued || '')));
     const available = orderedInvoices.reduce((sum, invoice) => sum + checkInvoiceBalance(invoice), 0);
-    if (total > available + 0.01) return res.status(400).json({ message: `El cheque excede el saldo disponible de las facturas seleccionadas (${available.toFixed(2)}).` });
 
     // Reparto manual opcional: [{ invoiceId, amount }]. Si no llega, se reparte automático (más antigua primero).
     const rawAllocations = Array.isArray(req.body?.allocations)
@@ -1477,7 +1502,13 @@ app.post('/api/checks', authenticate, adminOnly, async (req, res, next) => {
       const invoiceIdSet = new Set(invoiceIds);
       if (rawAllocations.some(a => !invoiceIdSet.has(a.invoiceId))) return res.status(400).json({ message: 'El reparto incluye una factura que no está seleccionada.' });
       const sumAllocated = rawAllocations.reduce((sum, a) => sum + a.amount, 0);
-      if (Math.abs(sumAllocated - total) > 0.01) return res.status(400).json({ message: 'El reparto por factura no coincide con el total del cheque.' });
+      // Lo que sobre del cheque queda como saldo a favor, solo si las facturas seleccionadas quedan pagadas por completo.
+      const overpayment = total - sumAllocated;
+      if (overpayment < -0.01) return res.status(400).json({ message: 'El reparto por factura supera el total del cheque.' });
+      if (overpayment > 0.01 && (total <= available + 0.01 || Math.abs(sumAllocated - available) > 0.01)) {
+        return res.status(400).json({ message: 'Para registrar un saldo a favor, aplica primero el saldo completo de las facturas seleccionadas.' });
+      }
+      if (overpayment <= 0.01 && Math.abs(sumAllocated - total) > 0.01) return res.status(400).json({ message: 'El reparto por factura no coincide con el total del cheque.' });
       for (const alloc of rawAllocations) {
         const invoice = selectedInvoices.find(inv => invoiceIdMatches(inv.id, alloc.invoiceId));
         const balance = checkInvoiceBalance(invoice);
@@ -1489,7 +1520,7 @@ app.post('/api/checks', authenticate, adminOnly, async (req, res, next) => {
         allocations.push({ invoiceId: invoice.id, folio: invoice.folio, amount });
       }
     } else {
-      let remaining = total;
+      let remaining = Math.min(total, available);
       for (const invoice of orderedInvoices) {
         const amount = Math.min(remaining, checkInvoiceBalance(invoice));
         if (amount <= 0) continue;
@@ -1502,6 +1533,10 @@ app.post('/api/checks', authenticate, adminOnly, async (req, res, next) => {
       }
     }
 
+    const allocatedTotal = allocations.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const excess = Number(Math.max(0, total - allocatedTotal).toFixed(2));
+    if (excess > 0.01 && !allocations.length) return res.status(400).json({ message: 'Selecciona una factura para relacionar el saldo a favor del cliente.' });
+    const sourceAllocation = allocations[allocations.length - 1];
     const check = {
       id: Date.now(),
       date,
@@ -1510,19 +1545,28 @@ app.post('/api/checks', authenticate, adminOnly, async (req, res, next) => {
       clientKey,
       total: Number(total.toFixed(2)),
       allocations,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(excess > 0.01 ? { customerCredit: { amount: excess, sourceInvoiceId: sourceAllocation.invoiceId, sourceFolio: sourceAllocation.folio, applications: [] } } : {})
     };
+    // el saldo a favor se aplica de una vez a las facturas posteriores del cliente que ya existan
+    if (excess > 0.01) applyCustomerCreditToInvoices(allInvoices, check, checkCustomersMatch);
     db.checks.push(check);
     // Las facturas Walmex son de solo lectura; solo se persisten los cambios
     // de facturas internas y el cheque. Walmex se recalcula desde el historial.
     await writeDb(db);
-    res.status(201).json({ message: `Cheque ${series} registrado correctamente.`, check });
+    const message = !check.customerCredit
+      ? `Cheque ${series} registrado correctamente.`
+      : checkCustomerCreditRemaining(check) > 0.01
+        ? `Cheque ${series} registrado. El excedente quedó como saldo a favor del cliente.`
+        : `Cheque ${series} registrado y el excedente se aplicó a facturas posteriores.`;
+    res.status(201).json({ message, check });
   } catch (error) { next(error); }
 });
 
 // Revierte las asignaciones de un cheque, devolviendo el saldo a las facturas.
 function reverseCheckAllocations(invoices, check) {
-  for (const alloc of check.allocations || []) {
+  const allocations = [...(check.allocations || []), ...(check.customerCredit?.applications || [])];
+  for (const alloc of allocations) {
     const invoice = invoices.find(inv => invoiceIdMatches(inv.id, alloc.invoiceId));
     if (!invoice) continue;
     const amount = Number(alloc.amount) || 0;
@@ -1559,7 +1603,9 @@ app.delete('/api/checks/:id', authenticate, adminOnly, async (req, res, next) =>
     const index = (db.checks || []).findIndex(check => check.id === id);
     if (index === -1) return res.status(404).json({ message: 'El cheque no existe.' });
     const [check] = db.checks.splice(index, 1);
-    const needsWalmex = (check.allocations || []).some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'));
+    const needsWalmex = [...(check.allocations || []), ...(check.customerCredit?.applications || [])]
+      .some(allocation => String(allocation.invoiceId || '').toLowerCase().startsWith('walmex-'))
+      || String(check.customerCredit?.sourceInvoiceId || '').toLowerCase().startsWith('walmex-');
     const walmex = needsWalmex ? await loadWalmexInvoices(process.env.WALMEX_DATABASE_URL, db.checks || []) : [];
     reverseCheckAllocations([...db.invoices, ...walmex], check);
     await writeDb(db);
@@ -1574,6 +1620,7 @@ app.patch('/api/checks/:id', authenticate, adminOnly, async (req, res, next) => 
     const db = await readDb();
     const check = (db.checks || []).find(c => c.id === id);
     if (!check) return res.status(404).json({ message: 'El cheque no existe.' });
+    if (check.customerCredit) return res.status(409).json({ message: 'Este cheque tiene saldo a favor relacionado. Para modificarlo, elimínalo primero; se restaurarán todas sus aplicaciones.' });
 
     const date = req.body?.date !== undefined ? String(req.body.date || '').trim() : check.date;
     const series = req.body?.series !== undefined ? String(req.body.series || '').trim() : check.series;
@@ -2486,7 +2533,8 @@ app.post('/api/invoices/:id/send-credit-email', authenticate, async (req, res, n
       const norm = String(key).toLowerCase();
       return Object.prototype.hasOwnProperty.call(values, norm) ? String(values[norm]) : match;
     });
-    const subject = fill(req.body?.subject).trim();
+    const subjectTemplate = String(req.body?.templateSubject || req.body?.subject || '').trim();
+    const subject = fill(subjectTemplate).trim();
     if (!subject) return res.status(400).json({ message: 'Captura el asunto del correo.' });
 
     const logo = String(req.body?.logo || '');
@@ -2508,7 +2556,8 @@ app.post('/api/invoices/:id/send-credit-email', authenticate, async (req, res, n
     // el mensaje de devolucion se guarda por empresa, aparte del de facturas
     if (req.user.role === 'admin' && req.body?.saveTemplate) {
       upsertEmailTemplate(db, String(req.body?.companyKey || '').trim(), {
-        subject, bodyHtml: String(req.body?.bodyHtml || ''), logo, updatedBy: req.user.email || ''
+        // se guarda con {{credito}} / {{factura}}; el asunto ya llenado solo es para este correo
+        subject: subjectTemplate, bodyHtml: String(req.body?.bodyHtml || ''), logo, updatedBy: req.user.email || ''
       });
     }
     // registro con creditNumber: distingue el envio de devolucion del de factura
@@ -2632,6 +2681,7 @@ app.post('/api/invoices', authenticate, adminOnly, upload.fields([{ name: 'invoi
     if (receivingFile) await syncPdfToOracle(receivingPdfPath, receivingFile.buffer);
     const invoice = { id, folio: String(folio || `FAC-${new Date().getFullYear()}-${String(next).padStart(4, '0')}`).trim(), poNumber: String(poNumber || '').trim(), guideNumber: String(guideNumber || '').trim(), client: String(client).trim(), location: String(location || '').trim(), clientKey: normalizeClientKey(client), email: String(email).trim().toLowerCase(), concept: String(concept).trim(), searchText: extracted.searchText || '', issued, due, amount: parsedAmount, status, invoiceFileName: invoiceFile?.originalname || '', receivingFileName: receivingFile?.originalname || '', invoicePdfPath, receivingPdfPath, invoiceSharePointUrl: sharePointFiles.invoice?.webUrl || '', receivingSharePointUrl: sharePointFiles.receiving?.webUrl || '' };
     invoice.sharePointStorage = { client: invoice.client, location: invoice.location, issued: invoice.issued, folio: invoice.folio };
+    applyPendingCustomerCreditsToInvoice(invoice, db.checks || [], checkCustomersMatch);
     db.invoices.push(invoice);
     await writeDb(db);
     res.status(201).json(invoice);
@@ -3102,6 +3152,7 @@ app.patch('/api/invoices/:id/invoice-pdf', authenticate, adminOnly, upload.singl
         await fs.writeFile(path.join(uploadsDir, invoice.invoicePdfPath), normalizedFile.buffer);
         await syncPdfToOracle(invoice.invoicePdfPath, normalizedFile.buffer);
         
+        applyPendingCustomerCreditsToInvoice(invoice, db.checks || [], checkCustomersMatch);
         db.invoices.push(invoice);
         // Do not remove the source until the database checkpoint below has
         // succeeded. If a later operation fails, the loose source remains
