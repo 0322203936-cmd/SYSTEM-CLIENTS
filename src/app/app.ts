@@ -2236,7 +2236,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     const invoiceKey = this.customerAliasKey(invoice.clientKey || invoice.client);
     if (assignedClients.length > 0) {
       const assignedKeys = assignedClients.map(value => this.customerAliasKey(value));
-      return assignedKeys.includes(invoiceKey);
+      return assignedKeys.includes(invoiceKey) || invoice.email?.toLowerCase() === current.email?.toLowerCase();
     }
     if (current.role === 'admin') return true;
     return (!!current.clientKey && invoiceKey === this.customerAliasKey(current.clientKey)) || invoice.email?.toLowerCase() === current.email?.toLowerCase();
