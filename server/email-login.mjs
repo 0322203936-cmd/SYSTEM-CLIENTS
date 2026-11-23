@@ -89,7 +89,8 @@ export function resolveEmailLogin(db, email, normalizeKey) {
 
 export function historyInvoiceAccess(user, invoice, normalizeKey) {
   const clientKey = normalizeKey(invoice.clientKey || invoice.client);
-  return Boolean(clientKey && user.assignedClients?.some(value => clientKeysMatch(value, clientKey, normalizeKey)));
+  return Boolean((clientKey && user.assignedClients?.some(value => clientKeysMatch(value, clientKey, normalizeKey)))
+    || (address(invoice.email) && address(invoice.email) === address(user.email)));
 }
 
 export function canSendEmailForInvoice(user, invoice, normalizeKey) {

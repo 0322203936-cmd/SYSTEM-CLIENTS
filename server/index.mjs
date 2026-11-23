@@ -1408,6 +1408,7 @@ app.get('/api/invoices', authenticate, async (req, res, next) => {
     const db = await readDb();
     const assignedKeys = expandClientKeys(req.user.assignedClients, normalizeClientKey);
     const invoices = req.user.role === 'admin' && assignedKeys.length === 0 ? db.invoices : db.invoices.filter(item => {
+      if (req.user.loginSource === 'email-history') return historyInvoiceAccess(req.user, item, normalizeClientKey);
       const invoiceKey = item.clientKey || normalizeClientKey(item.client);
       if (assignedKeys.length > 0) return assignedKeys.includes(invoiceKey);
       return invoiceKey === req.user.clientKey || item.email?.toLowerCase() === req.user.email?.toLowerCase();

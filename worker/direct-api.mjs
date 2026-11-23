@@ -470,12 +470,12 @@ async function pagedInvoices(sql, user, pagination) {
   if (!(user.role === 'admin' && assigned.length === 0)) {
     if (assigned.length) {
       params.push(assigned);
-      filters.push(`(record->>'clientKey' = ANY($${params.length}::text[]) OR lower(coalesce(record->>'email', '')) = $${params.length + 1})`);
+      filters.push(`(record->>'clientKey' = ANY($${params.length}::text[]) OR nullif(lower(trim(coalesce(record->>'email', ''))), '') = $${params.length + 1})`);
       params.push(String(user.email || '').toLowerCase());
     } else {
       params.push(String(user.clientKey || ''));
       params.push(String(user.email || '').toLowerCase());
-      filters.push(`(record->>'clientKey' = $${params.length - 1} OR lower(coalesce(record->>'email', '')) = $${params.length})`);
+      filters.push(`(record->>'clientKey' = $${params.length - 1} OR nullif(lower(trim(coalesce(record->>'email', ''))), '') = $${params.length})`);
     }
   }
   const where = filters.join(' AND ');
@@ -973,6 +973,7 @@ export async function tryDirectApi(request, env) {
     const invoices = await collection(sql, 'invoices');
     const assigned = expandClientKeys(user.assignedClients, clientKey);
     const visible = user.role === 'admin' && assigned.length === 0 ? invoices : invoices.filter(invoice => {
+      if (user.loginSource === 'email-history') return historyInvoiceAccess(user, invoice, clientKey);
       const key = invoice.clientKey || clientKey(invoice.client);
       if (assigned.length) return assigned.includes(key);
       return key === user.clientKey || String(invoice.email || '').toLowerCase() === String(user.email || '').toLowerCase();

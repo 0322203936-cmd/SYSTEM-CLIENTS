@@ -8,13 +8,21 @@ const db = { users: [], invoices: [{id: 1, client: 'Galleria Farms'}, {id: 2, cl
 test('To recipient receives only associated customers, never admin permissions', () => {
   const result = resolveEmailLogin(db, ' BUYER@EXAMPLE.COM ', key);
   assert.equal(result.kind, 'history');
-  assert.deepEqual(result.user.assignedClients, ['galleria-farms']);
+  assert.deepEqual(result.user.assignedClients, ['galleria-farms', 'galleria-farms-flores']);
   assert.equal(result.user.role, 'client');
   assert.ok(result.user.permissions.includes('dashboard'));
   assert.ok(!result.user.permissions.includes('settings'));
   assert.ok(result.user.permissions.includes('preferences'));
   assert.equal(historyInvoiceAccess(result.user, db.invoices[0], key), true);
   assert.equal(historyInvoiceAccess(result.user, db.invoices[1], key), false);
+});
+test('an existing email-history account can see one invoice addressed to it without gaining the whole customer', () => {
+  const user = resolveEmailLogin(db, 'buyer@example.com', key).user;
+  const shared = {id: 3, client: 'Falcon Farms Inc-AZ', email: 'BUYER@example.com'};
+  const other = {id: 4, client: 'Falcon Farms Inc-AZ', email: ''};
+  assert.equal(historyInvoiceAccess(user, shared, key), true);
+  assert.equal(historyInvoiceAccess(user, other, key), false);
+  assert.deepEqual(user.assignedClients, ['galleria-farms', 'galleria-farms-flores']);
 });
 test('CC, unknown and partial addresses never grant access', () => {
   for (const email of ['copy@example.com', 'sent-by-client@example.com', 'unknown@example.com', 'buyer', '']) {
@@ -35,7 +43,7 @@ test('multiple customers deduplicate; CC-only customer is excluded', () => {
   {invoiceId: 2, to: ['someone@example.com'], cc: ['buyer@example.com'], sentAt: '2026-09-14'},
     {invoiceId: 2, to: ['sent-by-client@example.com'], sentAt: '2026-09-14', sentByRole: 'client'},
     {clientKey: 'third', to: ['buyer@example.com'], sentAt: '2026-09-14'}]}, 'buyer@example.com', key);
-  assert.deepEqual(result.user.assignedClients, ['galleria-farms', 'third']);
+  assert.deepEqual(result.user.assignedClients, ['galleria-farms', 'galleria-farms-flores', 'third']);
 });
 test('unattributed or unsent entries cannot authorize a customer', () => {
   assert.equal(resolveEmailLogin({...db, emailLog: [{to: ['buyer@example.com'], sentAt:'2026-09-14'}, {to:['buyer@example.com'], clientKey:'other'}]}, 'buyer@example.com', key).kind, 'denied');
