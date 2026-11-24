@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { neon } from '@neondatabase/serverless';
+import { hyperdriveSql } from './pg-sql.mjs';
 import { PDFDocument } from 'pdf-lib';
 import { extractText } from 'unpdf';
 import * as XLSX from 'xlsx';
@@ -225,7 +226,15 @@ function issueSession(user, secret) {
     .then(token => ({ token, user: profile }));
 }
 
+// La base principal vive en el PostgreSQL del servidor y se llega por Hyperdrive (binding HYPERDRIVE).
+// Si el binding no esta, se usa Neon como antes: sirve para regresar rapido si algo falla.
+// (Walmex sigue en su propio Neon: walmex-source.mjs no pasa por aqui.)
 function sqlClient(env) {
+  if (env.HYPERDRIVE?.connectionString) {
+    const sql = hyperdriveSql(env.HYPERDRIVE.connectionString);
+    env.__sqlClients?.push(sql);
+    return sql;
+  }
   if (!env.NEON_DATABASE_URL) throw new Error('NEON_DATABASE_URL no está configurada en Cloudflare.');
   return neon(env.NEON_DATABASE_URL);
 }
@@ -880,13 +889,24 @@ async function processInvoiceSyncFile(env, sql, job, file) {
   Object.assign(job, { processed, skipped, issues, details });
 }
 
+// Cada peticion abre sus propias conexiones a la base (Hyperdrive) y se cierran al terminar.
 export async function tryDirectApi(request, env) {
+  const sqlClients = [];
+  const requestEnv = Object.create(env, { __sqlClients: { value: sqlClients } });
+  try {
+    return await handleDirectApi(request, requestEnv);
+  } finally {
+    await Promise.all(sqlClients.map(sql => sql.end()));
+  }
+}
+
+async function handleDirectApi(request, env) {
   // La activación es explícita para que la migración se pueda probar sin
   // cambiar el tráfico actual antes de configurar todos los secretos.
   if (String(env.DIRECT_API || '').toLowerCase() !== 'true') return null;
   const url = new URL(request.url);
   const path = url.pathname;
-  if (path === '/api/health' && request.method === 'GET') return json({ status: 'ok', runtime: 'cloudflare-worker', database: Boolean(env.NEON_DATABASE_URL), oracle: Boolean(env.OCI_PRIVATE_KEY && env.OCI_NAMESPACE), graph: Boolean(env.MAIL_FROM && env.SHAREPOINT_TENANT_ID && env.SHAREPOINT_CLIENT_ID && env.SHAREPOINT_CLIENT_SECRET) });
+  if (path === '/api/health' && request.method === 'GET') return json({ status: 'ok', runtime: 'cloudflare-worker', database: Boolean(env.HYPERDRIVE || env.NEON_DATABASE_URL), databaseSource: env.HYPERDRIVE ? 'hyperdrive' : 'neon', oracle: Boolean(env.OCI_PRIVATE_KEY && env.OCI_NAMESPACE), graph: Boolean(env.MAIL_FROM && env.SHAREPOINT_TENANT_ID && env.SHAREPOINT_CLIENT_ID && env.SHAREPOINT_CLIENT_SECRET) });
 
   if (path === '/api/auth/login' && request.method === 'POST') {
     try {
