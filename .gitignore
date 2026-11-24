@@ -49,3 +49,6 @@ __screenshots__/
 Thumbs.db
 
 consolidacion.xlsx
+
+# respaldos locales de la base (tools/respaldo_bd.ps1)
+/respaldos
