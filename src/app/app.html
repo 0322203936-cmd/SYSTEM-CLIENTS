@@ -116,6 +116,7 @@
         @if (user()!.role === 'admin' && canViewPortalModule('reconciliation')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'reconciliation'" (click)="openReconciliation(); taskCenterTab.set('reconciliation')"><kendo-svg-icon [icon]="kendoReconciliationIcon" aria-hidden="true"></kendo-svg-icon><span>{{ t('reconciliation') }}</span></button>}
         @if (canViewPortalModule('accountStatement')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'receipt_exceptions'" (click)="openReconciliation(); taskCenterTab.set('receipt_exceptions')"><kendo-svg-icon [icon]="kendoStatementIcon" aria-hidden="true"></kendo-svg-icon><span>{{ language() === 'es' ? 'Estado de cuenta' : 'Account statement' }}</span></button>}
         @if (user()!.role === 'admin') {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'activity'" (click)="openReconciliation(); openPortalActivity()"><i class="nav-symbol" aria-hidden="true">insights</i><span>{{ language() === 'es' ? 'Actividad' : 'Activity' }}</span></button>}
+        @if (user()!.role === 'admin' && canViewPortalModule('marketing')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'marketing'" (click)="openMarketing()"><i class="nav-symbol" aria-hidden="true">campaign</i><span>Marketing</span></button>}
         @if (user()!.role === 'admin' && canViewPortalModule('settings')) {<button type="button" class="portal-nav-item" [class.portal-nav-item-active]="reconciliationView() && taskCenterTab() === 'settings'" (click)="openReconciliation(); taskCenterTab.set('settings')"><kendo-svg-icon [icon]="kendoSettingsIcon" aria-hidden="true"></kendo-svg-icon><span>{{ language() === 'es' ? 'Configuración' : 'Settings' }}</span></button>}
         @if (canViewPortalModule('preferences')) {<button type="button" class="portal-nav-item portal-nav-bottom-item" [class.portal-nav-item-active]="preferencesView()" (click)="openPreferences()"><kendo-svg-icon [icon]="kendoPreferencesIcon" aria-hidden="true"></kendo-svg-icon><span>{{ t('preferences') }}</span></button>}
       </nav>
@@ -254,6 +255,11 @@
                 <div class="task-center-nav-icon"><mat-icon fontSet="material-icons-outlined" style="color: #8fa0a8;">insights</mat-icon></div>
                 <span class="task-center-nav-text">{{ language() === 'es' ? 'Actividad' : 'Activity' }}</span>
                 <span class="task-center-nav-badge" style="background: transparent; color: black; font-weight: 500;">{{ portalActivity()?.activeClients || 0 }}</span>
+              </button>}
+              @if (user()!.role === 'admin' && canViewPortalModule('marketing')) {<button type="button" class="task-center-nav-item" [class.active]="taskCenterTab() === 'marketing'" (click)="openMarketing()">
+                <div class="task-center-nav-icon"><mat-icon fontSet="material-icons-outlined" style="color: #0e7079;">campaign</mat-icon></div>
+                <span class="task-center-nav-text">Marketing</span>
+                <span class="task-center-nav-badge" style="background: transparent; color: black; font-weight: 500;">{{ marketingSelectedRecipients().length }}</span>
               </button>}
               @if (user()!.role === 'admin' && canViewPortalModule('settings')) {<button type="button" class="task-center-nav-item" [class.active]="taskCenterTab() === 'settings'" (click)="taskCenterTab.set('settings')">
                 <div class="task-center-nav-icon"><mat-icon fontSet="material-icons-outlined" style="color: #8fa0a8;">settings</mat-icon></div>
@@ -1099,6 +1105,21 @@
                 } @else {
                   <p class="activity-empty">{{ portalActivityLoading() ? (language() === 'es' ? 'Cargando…' : 'Loading…') : (language() === 'es' ? 'Sin datos de actividad.' : 'No activity data.') }}</p>
                 }
+              </section>
+            } @else if (taskCenterTab() === 'marketing') {
+              <section class="marketing-page">
+                <header class="activity-head">
+                  <div><h2>Marketing</h2><p>Prepara una campaña sin modificar información de facturación.</p></div>
+                  <div class="marketing-actions"><button type="button" class="btn-cancel" (click)="clearMarketingRecipients()">Limpiar selección</button><button type="button" class="btn-save" (click)="selectMarketingRecipients()">Seleccionar todos</button></div>
+                </header>
+                <div class="marketing-compose">
+                  <label><span>Sender</span><select [ngModel]="marketingSender()" (ngModelChange)="marketingSender.set($event)"><option value="AR@Pacifica-farms.com">AR&#64;Pacifica-farms.com</option><option value="noreply&#64;cfbc.co">noreply&#64;cfbc.co</option><option value="noreply@pacifica-farms.com">noreply&#64;pacifica-farms.com</option></select></label>
+                  <label><span>Asunto</span><input [ngModel]="marketingSubject()" (ngModelChange)="marketingSubject.set($event)"></label>
+                  <label><span>Mensaje</span><textarea rows="4" [ngModel]="marketingBody()" (ngModelChange)="marketingBody.set($event)"></textarea></label>
+                  <p class="marketing-note">Selected sender: <strong>{{ marketingSender() }}</strong>. Select recipients and confirm the send.</p>
+                  <div class="marketing-send-row"><span>{{ marketingSelectedRecipients().length }} destinatario(s) seleccionados</span><button type="button" class="btn-save" (click)="saveMarketingDraft()" [disabled]="marketingLoading()">Guardar borrador</button><button type="button" class="btn-save" (click)="sendMarketing()" [disabled]="marketingLoading() || !marketingSelectedRecipients().length">Send</button></div>
+                </div>
+                <div class="marketing-table-wrap"><table class="marketing-table"><thead><tr><th></th><th>Correo</th><th>Cliente</th><th>Estado</th></tr></thead><tbody>@for (recipient of marketingRecipients(); track recipient.email) {<tr><td><input type="checkbox" [checked]="marketingSelectedRecipients().includes(recipient.email)" [disabled]="recipient.bounced" (change)="toggleMarketingRecipient(recipient.email)"></td><td>{{ recipient.email }}</td><td>{{ recipient.client || '—' }}</td><td>{{ recipient.bounced ? 'Correo rebotado' : 'Disponible' }}</td></tr>} @empty {<tr><td colspan="4">{{ marketingLoading() ? 'Cargando destinatarios…' : 'No hay destinatarios.' }}</td></tr>}</tbody></table></div>
               </section>
             } @else if (taskCenterTab() === 'settings') {
               <section class="sync-settings-page">

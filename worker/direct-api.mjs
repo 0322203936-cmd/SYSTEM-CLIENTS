@@ -1346,6 +1346,64 @@ export async function tryDirectApi(request, env) {
     return json({ entries });
   }
 
+  // Marketing is intentionally separate from invoice data. This endpoint only
+  // prepares a unique recipient list; it never sends mail or mutates invoices.
+  if (path === '/api/marketing/recipients' && request.method === 'GET') {
+    if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
+    const [emailLog, bounces] = await Promise.all([collection(sql, 'emailLog'), collection(sql, 'marketingBounces')]);
+    const bounced = new Set(bounces.map(item => String(item.email || '').trim().toLowerCase()).filter(Boolean));
+    const byEmail = new Map();
+    for (const entry of emailLog) {
+      const client = String(entry.client || '').trim();
+      for (const raw of [...(Array.isArray(entry.to) ? entry.to : []), ...(Array.isArray(entry.cc) ? entry.cc : [])]) {
+        const email = String(raw || '').trim().toLowerCase();
+        if (!email || !email.includes('@')) continue;
+        if (!byEmail.has(email)) byEmail.set(email, { email, client, bounced: bounced.has(email) });
+        else if (!byEmail.get(email).client && client) byEmail.get(email).client = client;
+      }
+    }
+    return json({ recipients: [...byEmail.values()].sort((a, b) => a.email.localeCompare(b.email)) });
+  }
+
+  if (path === '/api/marketing/campaigns' && request.method === 'POST') {
+    if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
+    const body = await request.json();
+    const recipients = [...new Set((Array.isArray(body?.recipients) ? body.recipients : []).map(value => String(value || '').trim().toLowerCase()).filter(value => value.includes('@')))];
+    const subject = String(body?.subject || '').trim();
+    if (!subject || !recipients.length) return json({ message: 'Captura asunto y al menos un destinatario.' }, 400);
+    const campaigns = await collection(sql, 'marketingCampaigns');
+    const campaign = { id: Date.now(), subject, bodyHtml: String(body?.bodyHtml || ''), recipients, status: 'draft', createdAt: new Date().toISOString(), createdBy: user.email || '' };
+    await saveRecord(sql, 'marketingCampaigns', campaign.id, campaign, campaigns.length);
+    return json({ campaign }, 201);
+  }
+
+  if (path === '/api/marketing/send' && request.method === 'POST') {
+    if (!adminOnly(user)) return json({ message: 'Acceso exclusivo para administradores.' }, 403);
+    if (!env.MAIL_FROM || !env.SHAREPOINT_TENANT_ID || !env.SHAREPOINT_CLIENT_ID || !env.SHAREPOINT_CLIENT_SECRET) return json({ message: 'El envío de correo no está configurado.' }, 503);
+    const body = await request.json();
+    const marketingSenders = [String(env.MAIL_FROM || '').trim().toLowerCase(), String(env.MAIL_FROM_MARKETING || 'noreply@cfbc.co').trim().toLowerCase(), 'noreply@pacifica-farms.com'].filter(Boolean);
+    const sender = String(body?.sender || env.MAIL_FROM).trim().toLowerCase();
+    if (!marketingSenders.includes(sender)) return json({ message: 'Remitente de Marketing no permitido.' }, 400);
+    const recipients = [...new Set((Array.isArray(body?.recipients) ? body.recipients : []).map(value => String(value || '').trim().toLowerCase()).filter(value => value.includes('@')))];
+    const subject = String(body?.subject || '').trim();
+    if (!subject || !recipients.length) return json({ message: 'Captura asunto y al menos un destinatario.' }, 400);
+    const bodyText = String(body?.bodyHtml || '').trim();
+    const escapeHtml = value => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    const portalUrl = 'https://pacifica-farms-portal.pacifica-clients.workers.dev';
+    const safeBody = escapeHtml(bodyText).replaceAll('\n', '<br>');
+    const logoUrl = `${portalUrl}/pacifica-farms-marketing-logo.png`;
+    const html = `<!doctype html><html><body style="margin:0;background:#eef3f1;font-family:Arial,Segoe UI,sans-serif;color:#18324a"><div style="width:100%;margin:0;padding:0"><div style="background:#074c73;padding:22px 5%;color:#fff;border-top:6px solid #e9ad3d"><table role="presentation" width="100%"><tr><td><img src="${logoUrl}" alt="Pacifica Farms" width="150" style="display:block;max-width:150px;height:auto"></td><td align="right" style="font-size:11px;color:#f8ce62;letter-spacing:1px">CLIENT PORTAL</td></tr></table><div style="height:1px;background:rgba(255,255,255,.3);margin:18px 0"></div><p style="margin:0 0 8px;color:#f8ce62;font-size:12px;font-weight:bold;letter-spacing:1px">PACIFICA FARMS</p><h1 style="margin:0;font-size:25px;line-height:1.2;color:#fff">Your documents are available</h1><p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#f4fbf8">${safeBody}</p></div><div style="background:#fff;padding:22px 5%"><h2 style="margin:0 0 6px;color:#074c73;font-size:18px">Everything in one place</h2><p style="margin:0 0 16px;color:#5c7180;font-size:13px">Access your documents quickly and securely.</p><div style="background:#eef7f1;border-radius:12px;padding:14px;margin-bottom:10px"><strong style="color:#18324a">▣ &nbsp; Invoices</strong><br><span style="font-size:12px;color:#607482">View and download your invoices.</span></div><div style="background:#fff7df;border-radius:12px;padding:14px;margin-bottom:20px"><strong style="color:#18324a">▧ &nbsp; Receiving Documents</strong><br><span style="font-size:12px;color:#607482">Review your receiving documents.</span></div><div style="background:#074c73;border-radius:12px;padding:18px;text-align:center"><h2 style="margin:0 0 5px;color:#fff;font-size:17px">Sign in to your portal</h2><p style="margin:0 0 15px;color:#d9f1e9;font-size:12px">Your information is always available.</p><a href="${portalUrl}" style="display:block;background:#f8c744;color:#18324a;text-decoration:none;border-radius:7px;padding:13px 10px;font-weight:bold;font-size:13px">ACCESS MY PORTAL&nbsp; ↗</a></div></div><div style="background:#fff;border-top:1px solid #d9e3df;padding:18px 5%;text-align:center;color:#5c7180;font-size:12px"><strong style="color:#18324a">Pacifica Farms | Customer Support</strong><br><span style="display:block;margin-top:8px">Thank you for trusting us.</span><span style="display:block;margin-top:8px;font-size:10px;color:#8a9aa4">This is an informational notification.</span></div></div></body></html>`;
+    // Privacy: Marketing must deliver one independent message per recipient;
+    // never place the full campaign list in a shared To header.
+    for (const recipient of recipients) {
+      await sendGraphMail(env, { to: [recipient], cc: [], subject, html, from: sender });
+    }
+    const campaigns = await collection(sql, 'marketingCampaigns');
+    const campaign = { id: Date.now(), subject, bodyHtml: bodyText, recipients, sender, status: 'sent', sentAt: new Date().toISOString(), createdBy: user.email || '' };
+    await saveRecord(sql, 'marketingCampaigns', campaign.id, campaign, campaigns.length);
+    return json({ sent: recipients.length, campaign });
+  }
+
   // Actividad del portal: quien entra y quien todavia no. Devuelve el resumen
   // ya digerido, no las filas de la bitacora.
   if (path === '/api/portal-activity' && request.method === 'GET') {

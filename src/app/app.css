@@ -4310,3 +4310,16 @@ table td { vertical-align: middle; }
 :host     ::ng-deep .as-customer-panel .p-multiselect-item,
 :host     ::ng-deep .agents-multiselect .p-multiselect-label,
 :host ::ng-deep .agents-panel .p-multiselect-item { text-transform: uppercase; }
+/* Marketing: solo preparación y selección; el envío requiere acción explícita. */
+.marketing-page { display:flex; min-height:100%; flex-direction:column; gap:1rem; padding:1.5rem; background:#fff; }
+.marketing-compose { display:grid; gap:.8rem; padding:1rem; border:1px solid #d8e2e7; border-radius:6px; background:#f7fafb; }
+.marketing-compose label { display:grid; gap:.35rem; color:#244b6d; font-size:.75rem; font-weight:700; }
+.marketing-compose input,.marketing-compose textarea { border:1px solid #c7d4dc; border-radius:4px; padding:.65rem; font:inherit; }
+.marketing-actions,.marketing-send-row { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+.marketing-send-row { justify-content:flex-end; color:#526675; font-size:.75rem; }
+.marketing-send-row span { margin-right:auto; }
+.marketing-note { margin:0; color:#526675; font-size:.75rem; }
+.marketing-table-wrap { overflow:auto; border:1px solid #d8e2e7; }
+.marketing-table { width:100%; border-collapse:collapse; color:#29435b; font-size:.78rem; }
+.marketing-table th,.marketing-table td { padding:.65rem .75rem; border-bottom:1px solid #e8edf0; text-align:left; }
+.marketing-table th { background:#056b76; color:#fff; }

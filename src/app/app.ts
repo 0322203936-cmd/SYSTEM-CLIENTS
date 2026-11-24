@@ -35,7 +35,7 @@ import { CategoryScale, Chart, Filler, Legend, LineController, LineElement, Line
 
 type Status = 'Pagada' | 'Pendiente' | 'Vencida';
 type Role = 'admin' | 'client';
-type PortalPermission = 'dashboard' | 'invoices' | 'checks' | 'support' | 'credits' | 'reconciliation' | 'accountStatement' | 'settings' | 'users' | 'preferences';
+type PortalPermission = 'dashboard' | 'invoices' | 'checks' | 'support' | 'credits' | 'reconciliation' | 'accountStatement' | 'marketing' | 'settings' | 'users' | 'preferences';
 type Language = 'en' | 'es';
 type InvoiceSortKey = 'poNumber' | 'guideNumber' | 'folio' | 'client' | 'issued' | 'due' | 'amount' | 'status';
 type InvoiceView = 'all' | 'pending' | 'received' | 'paid' | 'overdue' | 'returns';
@@ -591,6 +591,12 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
   activeTab = signal<'dashboard' | 'invoices' | 'clients'>('dashboard');
   reconciliationView = signal(false);
   taskCenterTab = signal('reconciliation');
+  marketingRecipients = signal<{ email: string; client: string; bounced: boolean }[]>([]);
+  marketingSelectedRecipients = signal<string[]>([]);
+  marketingSubject = signal('Your Pacifica Farms documents are available');
+  marketingBody = signal('You can sign in with this same email address to view your invoices, receiving documents, and account statements.');
+  marketingSender = signal('AR@Pacifica-farms.com');
+  marketingLoading = signal(false);
   checksSubTab = signal<'register' | 'report'>('register');
   checks = signal<CheckRecord[]>([]);
   checksDateFrom = signal('');
@@ -740,6 +746,7 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     { key: 'credits', es: 'Créditos', en: 'Credits', icon: 'edit_document' },
     { key: 'reconciliation', es: 'Reconciliación', en: 'Reconciliation', icon: 'local_shipping' },
     { key: 'accountStatement', es: 'Estado de cuenta', en: 'Account statement', icon: 'account_balance' },
+    { key: 'marketing', es: 'Marketing', en: 'Marketing', icon: 'campaign' },
     { key: 'settings', es: 'Configuración', en: 'Settings', icon: 'settings' },
     { key: 'users', es: 'Usuarios', en: 'Users', icon: 'manage_accounts' },
     { key: 'preferences', es: 'Preferencias', en: 'Preferences', icon: 'tune' }
@@ -2118,6 +2125,60 @@ export class App implements AfterViewChecked, AfterViewInit, OnDestroy {
     url.searchParams.set('view', 'reconciliation');
     window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
     if (this.user()?.role === 'admin') this.loadReconciliation();
+  }
+
+  openMarketing() {
+    this.accountView.set(false);
+    this.preferencesView.set(false);
+    this.reconciliationView.set(true);
+    this.taskCenterTab.set('marketing');
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'reconciliation');
+    window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    this.loadMarketingRecipients();
+  }
+
+  loadMarketingRecipients() {
+    this.marketingLoading.set(true);
+    this.http.get<{ recipients: { email: string; client: string; bounced: boolean }[] }>('/api/marketing/recipients', this.authOptions()).subscribe({
+      next: response => this.marketingRecipients.set(response.recipients || []),
+      error: error => this.notify(this.errorMessage(error)),
+      complete: () => this.marketingLoading.set(false)
+    });
+  }
+
+  toggleMarketingRecipient(email: string) {
+    const selected = this.marketingSelectedRecipients();
+    this.marketingSelectedRecipients.set(selected.includes(email) ? selected.filter(value => value !== email) : [...selected, email]);
+  }
+
+  selectMarketingRecipients() {
+    this.marketingSelectedRecipients.set(this.marketingRecipients().filter(item => !item.bounced).map(item => item.email));
+  }
+
+  clearMarketingRecipients() { this.marketingSelectedRecipients.set([]); }
+
+  saveMarketingDraft() {
+    const recipients = this.marketingSelectedRecipients();
+    if (!recipients.length) { this.notify('Selecciona al menos un destinatario.'); return; }
+    this.marketingLoading.set(true);
+    this.http.post('/api/marketing/campaigns', { subject: this.marketingSubject(), bodyHtml: this.marketingBody(), recipients }, this.authOptions()).subscribe({
+      next: () => this.notify('Borrador guardado. No se envió ningún correo.'),
+      error: error => this.notify(this.errorMessage(error)),
+      complete: () => this.marketingLoading.set(false)
+    });
+  }
+
+  sendMarketing() {
+    const recipients = this.marketingSelectedRecipients();
+    if (!recipients.length) { this.notify('Selecciona al menos un destinatario.'); return; }
+    if (!window.confirm(`Se enviará el mensaje a ${recipients.length} destinatario(s). ¿Continuar?`)) return;
+    this.marketingLoading.set(true);
+    this.http.post<{ sent: number }>('/api/marketing/send', { subject: this.marketingSubject(), bodyHtml: this.marketingBody(), recipients, sender: this.marketingSender() }, this.authOptions()).subscribe({
+      next: response => this.notify(`Mensaje enviado a ${response.sent} destinatario(s).`),
+      error: error => this.notify(this.errorMessage(error)),
+      complete: () => this.marketingLoading.set(false)
+    });
   }
 
   openCreditReconciliation() {

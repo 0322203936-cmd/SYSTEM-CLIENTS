@@ -74,6 +74,14 @@ export async function extractInvoicePdf(bytes) {
   const altTotal = text.match(/Invoice\s+Total\s*\$\s*([\d,]+\.\d{2})/i);
   const altLocation = text.match(/Location\s*ID:[^\r\n]*[\r\n]+\s*([^\r\n]+)/i);
   const altClient = altDate && altNumber && /Trader Joe's/i.test(text) ? "Trader Joe's" : '';
+  // Invoices from Pacifica's Starter Bros. layout place the SOLD TO and SHIP
+  // TO columns on the same extracted line. The ship-to city (`SoCal`) can
+  // otherwise be appended to the customer name by the text extractor.
+  const starterBrosClient = text.match(/SOLD\s+TO\.?[\s\S]{0,120}?(Starter\s+Bros\.?\s+Markets)\b/i)?.[1] || '';
+  // Trader Joe's imprime el PO como `Order Number` (a veces sin dos puntos).
+  // Debe tener prioridad sobre la palabra `Release`, que aparece como etiqueta
+  // en la misma sección del PDF y no es un número de orden.
+  const traderOrderNumber = /ORDER\s*(?:#|NUMBER)\s*:?\s*([0-9]{7,})/i.exec(text);
 
   const fontanaDate = text.match(/PO\s+Date\s*:\s*[\r\n]+\s*(\d{1,2})\/(\d{1,2})\/(20\d{2})/i);
   const fontanaIssued = fontanaDate ? `${fontanaDate[3]}-${String(fontanaDate[1]).padStart(2, '0')}-${String(fontanaDate[2]).padStart(2, '0')}` : '';
@@ -131,9 +139,9 @@ export async function extractInvoicePdf(bytes) {
 
   const issued = altDate?.[1] || fontanaIssued || oldDateMatch?.[1] || newIssued || centroIssued || pacificaIssued || sampleHeader?.[1];
   const folio = altNumber?.[1] || oldNumberMatch?.[1] || newNumber?.[1] || centroInvoice?.[1] || pacificaInvoice?.[1] || originInvoiceMatch?.[1] || compactOriginInvoiceMatch?.[1] || pacificaWInvoice?.[1] || fontanaNumber?.[1] || sampleHeader?.[2] || '';
-  const rawClient = altClient || oldClientMatch?.[1] || inlineSoldToMatch?.[1] || newClientAfterTotal?.[1] || centroClientAfterInvoice?.[1] || centroClient?.[1] || newClient?.[1] || pacificaClient || fontanaClient?.[1] || sampleClient?.[1] || '';
+  const rawClient = altClient || starterBrosClient || oldClientMatch?.[1] || inlineSoldToMatch?.[1] || newClientAfterTotal?.[1] || centroClientAfterInvoice?.[1] || centroClient?.[1] || newClient?.[1] || pacificaClient || fontanaClient?.[1] || sampleClient?.[1] || '';
   const totalValue = jasperTotal || altTotal?.[1] || oldTotalMatch?.[1] || newTotal?.[1] || prefixTotal?.[1] || centroTotal?.[1] || pacificaTotal?.[1] || pacificaTopAmount?.[1] || labeledTotal?.[1] || fontanaTotal?.[1] || sampleTotal?.[1] || '';
-  const poCandidates = [altPo?.[1], standalonePoMatch?.[1], splitPoMatch ? `${splitPoMatch[1]}${splitPoMatch[2]}` : '', oldPoMatch?.[1], newPo?.[1], centroPo?.[1], pacificaPo?.[1], sampleHeader?.[3], fontanaPo?.[1], inlinePoMatch?.[1], linePoMatch?.[1]?.trim()];
+  const poCandidates = [traderOrderNumber?.[1], altPo?.[1], standalonePoMatch?.[1], splitPoMatch ? `${splitPoMatch[1]}${splitPoMatch[2]}` : '', oldPoMatch?.[1], newPo?.[1], centroPo?.[1], pacificaPo?.[1], sampleHeader?.[3], fontanaPo?.[1], inlinePoMatch?.[1], linePoMatch?.[1]?.trim()];
   const usablePo = value => { const candidate = String(value || '').trim(); return candidate.length >= 3 && !/\s/.test(candidate) && !/^(?:item|description|unit|price|total|value|number)$/i.test(candidate) && !/^20\d{2}-\d{2}-\d{2}$/.test(candidate); };
   if (!issued || !folio || !rawClient || !totalValue) throw new Error('No se pudieron detectar todos los datos principales de la factura.');
   const client = rawClient.replace(/\s+\d{3,}\s+.*$/, '').trim();
