@@ -4,12 +4,11 @@
   "compatibility_date": "2026-09-07",
   "compatibility_flags": ["global_fetch_strictly_public", "nodejs_compat"],
   "keep_vars": true,
-  // Base principal en el PostgreSQL del servidor: tunel facturacion-pc -> servicio VPC facturacion-postgres -> Hyperdrive.
-  // NO descomentar suelto: se activa solo en el cambio final, despues de copiar Neon por ultima vez.
-  // Mientras siga comentado, el Worker usa Neon (NEON_DATABASE_URL) como siempre.
-  // "hyperdrive": [
-  //   { "binding": "HYPERDRIVE", "id": "f1dcd1bae40b46149c432cab2c088d07" }
-  // ],
+  // Base principal en el PostgreSQL del servidor (desde el 24/11/2026): tunel facturacion-pc -> servicio VPC
+  // facturacion-postgres -> Hyperdrive. Para regresar a Neon: comentar este bloque y publicar (wrangler deploy).
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "f1dcd1bae40b46149c432cab2c088d07" }
+  ],
   "assets": {
     "directory": "./dist/facturacion-clientes",
     "binding": "ASSETS"
